@@ -39,6 +39,31 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+def _choice_answer_index(answer, options):
+    """将选择题答案统一解析为选项索引，无法解析时返回 None。"""
+    if answer is None or not options:
+        return None
+
+    # 前端提交的选项索引可能是 int，也可能是字符串。
+    if isinstance(answer, int) or (isinstance(answer, str) and answer.strip().isdigit()):
+        index = int(answer)
+        return index if 0 <= index < len(options) else None
+
+    text = str(answer).strip()
+    if len(text) == 1 and text.upper() in "ABCDEFGHIJKLMNOPQRSTUVWXYZ":
+        index = ord(text.upper()) - ord("A")
+        return index if index < len(options) else None
+
+    # 选择题文本答案（例如“解释型语言”）按选项内容匹配。
+    for index, option in enumerate(options):
+        if text.casefold() == str(option).strip().casefold():
+            return index
+    return None
+
+
+_parse_choice_index = _choice_answer_index
+
+
 async def get_model_config(model_id: int) -> dict | None:
     """获取模型配置"""
     async with async_session_maker() as db:
@@ -366,17 +391,26 @@ async def submit_quiz(websocket: WebSocket, message: dict):
                     # 获取正确答案的选项文本
                     try:
                         # 尝试将 answer 解析为索引
-                        correct_idx = int(question.answer)
-                        correct_answer_display = question.options[correct_idx] if correct_idx < len(question.options) else question.answer
+                        correct_idx = _parse_choice_index(question.answer, question.options)
+                        correct_answer_display = question.options[correct_idx] if correct_idx is not None else question.answer
                     except (ValueError, TypeError):
                         # answer 本身就是文本
                         correct_answer_display = question.answer
 
                     # 比较用户答案和正确答案（支持索引或文本）
-                    is_correct = str(user_answer).strip() == str(correct_answer_display).strip()
+                    user_idx = _parse_choice_index(
+                        answer.get("user_answer_index", user_answer), question.options
+                    )
+                    is_correct = (
+                        correct_idx is not None and user_idx is not None
+                        and correct_idx == user_idx
+                    )
                     if not is_correct:
                         # 也尝试用原始索引比较
-                        is_correct = str(user_answer).strip() == str(question.answer).strip()
+                        is_correct = (
+                            str(user_answer).strip().casefold()
+                            == str(question.answer).strip().casefold()
+                        )
                 else:
                     # 非选择题直接比较
                     is_correct = str(user_answer).strip() == str(question.answer).strip()
