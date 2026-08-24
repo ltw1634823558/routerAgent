@@ -41,6 +41,38 @@ class TestLLMService:
         service = LLMService(config)
         # 应该使用默认的 OpenAI 兼容格式
 
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_llm_service_missing_api_key_raises_clear_error(self, monkeypatch):
+        """缺少密钥时不应构造无效的 Authorization 请求头。"""
+        from app.services.llm.base import LLMService
+
+        monkeypatch.delenv("TEST_API_KEY", raising=False)
+        service = LLMService({
+            "provider": "deepseek",
+            "model_name": "deepseek-chat",
+            "api_url": "https://api.deepseek.com/v1",
+            "api_key_env": "TEST_API_KEY",
+        })
+
+        with pytest.raises(ValueError, match="未检测到 API Key"):
+            await anext(service.chat([{"role": "user", "content": "测试"}]))
+
+    @pytest.mark.unit
+    def test_model_config_rejects_api_key_literal(self):
+        """模型配置只能保存环境变量名，不允许保存 API Key。"""
+        from pydantic import ValidationError
+        from app.schemas.model_config import ModelConfigCreate
+
+        with pytest.raises(ValidationError, match="API Key 环境变量名"):
+            ModelConfigCreate(
+                name="DeepSeek",
+                provider="deepseek",
+                model_name="deepseek-chat",
+                api_url="https://api.deepseek.com/v1",
+                api_key_env="sk-example-key",
+            )
+
 
 class TestSearchEngines:
     """搜索引擎测试"""

@@ -124,8 +124,11 @@ SERPAPI_KEY=your_serpapi_key
 ```bash
 # 后端
 cd backend
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
 pip install -r requirements.txt
-uvicorn app.main:app 
+uvicorn app.main:app
 
 
 # 前端

@@ -2,10 +2,14 @@
 LLM 服务 - 统一的 LLM 调用接口
 """
 import os
+import re
 import httpx
 import asyncio
 from typing import AsyncGenerator, Dict, Any, Optional
 from loguru import logger
+
+
+API_KEY_ENV_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*_API_KEY$")
 
 
 class LLMService:
@@ -13,7 +17,13 @@ class LLMService:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
-        self.api_key = os.getenv(config.get("api_key_env", ""), "")
+        self.api_key_env = str(config.get("api_key_env") or "").strip()
+        self.api_key_config_error: Optional[str] = None
+        if not API_KEY_ENV_NAME_PATTERN.fullmatch(self.api_key_env):
+            self.api_key_config_error = "模型配置中的 API Key 环境变量名格式无效"
+            self.api_key = ""
+        else:
+            self.api_key = os.getenv(self.api_key_env, "").strip()
         self.provider = config.get("provider", "")
         self.model_name = config.get("model_name", "")
         self.api_url = config.get("api_url", "")
@@ -25,6 +35,7 @@ class LLMService:
         **kwargs,
     ) -> AsyncGenerator[str, None]:
         """调用聊天接口"""
+        self._validate_api_key()
         if self.provider == "zhipu":
             async for chunk in self._chat_zhipu(messages, stream, **kwargs):
                 yield chunk
@@ -41,6 +52,15 @@ class LLMService:
             # 默认 OpenAI 兼容格式
             async for chunk in self._chat_openai_compatible(messages, stream, **kwargs):
                 yield chunk
+
+    def _validate_api_key(self) -> None:
+        """在发起网络请求前校验模型密钥配置。"""
+        if self.api_key_config_error:
+            raise ValueError(self.api_key_config_error)
+        if not self.api_key:
+            raise ValueError(
+                f"未检测到 API Key，请在 .env 中配置 {self.api_key_env} 后重启后端服务"
+            )
 
     async def _chat_openai_compatible(
         self,

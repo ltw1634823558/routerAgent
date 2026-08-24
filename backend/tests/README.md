@@ -20,6 +20,9 @@ tests/
 
 ```bash
 cd backend
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
@@ -35,37 +38,38 @@ pip install -r requirements.txt
 ### 运行所有测试
 ```bash
 cd backend
-python -m pytest tests/ -v
+.\.venv\Scripts\Activate.ps1
+pytest tests/ -v
 ```
 
 ### 运行特定类型的测试
 ```bash
 # 单元测试
-python -m pytest tests/ -v -m unit
+pytest tests/ -v -m unit
 
 # 集成测试
-python -m pytest tests/ -v -m integration
+pytest tests/ -v -m integration
 
 # API 测试
-python -m pytest tests/ -v -m api
+pytest tests/ -v -m api
 
 # Agent 测试
-python -m pytest tests/ -v -m agent
+pytest tests/ -v -m agent
 
 # WebSocket 测试
-python -m pytest tests/ -v -m websocket
+pytest tests/ -v -m websocket
 ```
 
 ### 运行特定文件
 ```bash
-python -m pytest tests/test_agents.py -v
-python -m pytest tests/test_api.py -v
-python -m pytest tests/test_websocket.py -v
+pytest tests/test_agents.py -v
+pytest tests/test_api.py -v
+pytest tests/test_websocket.py -v
 ```
 
 ### 生成覆盖率报告
 ```bash
-python -m pytest tests/ -v --cov=app --cov-report=html --cov-report=term
+pytest tests/ -v --cov=app --cov-report=html --cov-report=term
 ```
 
 覆盖率报告将生成在 `htmlcov/` 目录中。
@@ -148,8 +152,10 @@ python tests/run_tests.py --type all --verbose --coverage
 - name: Run Tests
   run: |
     cd backend
-    pip install -r requirements.txt
-    python -m pytest tests/ -v --cov=app --cov-report=xml
+    python -m venv .venv
+    . .venv/bin/activate
+pip install -r requirements.txt
+pytest tests/ -v --cov=app --cov-report=xml
 ```
 
 ## 注意事项

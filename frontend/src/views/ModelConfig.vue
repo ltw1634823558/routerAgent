@@ -193,7 +193,7 @@
             </template>
           </el-input>
         </el-form-item>
-        <el-form-item label="API KEY" required>
+        <el-form-item label="API Key 环境变量名" required>
           <el-input
             v-model="form.api_key_env"
             placeholder="环境变量名，如：ZHIPU_API_KEY"

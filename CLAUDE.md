@@ -11,8 +11,11 @@ RouterAgent 是一个自定义 AI 智能体平台，支持多种国内 LLM 模�
 ### 后端开发
 ```bash
 cd backend
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
 pip install -r requirements.txt
-uvicorn app.main:app --reload    # 启动开发服务器 (localhost:8000)
+uvicorn app.main:app --reload  # 启动开发服务器 (localhost:8000)
 ```
 
 ### 前端开发
@@ -26,10 +29,11 @@ npm run build                    # 生产构建
 ### 测试
 ```bash
 cd backend
-python -m pytest tests/ -v                    # 运行所有测试
-python -m pytest tests/ -v -m unit            # 只运行单元测试
-python -m pytest tests/ -v -m api             # 只运行 API 测试
-python -m pytest tests/ -v --cov=app --cov-report=html  # 生成覆盖率报告
+.\.venv\Scripts\Activate.ps1
+pytest tests/ -v                    # 运行所有测试
+pytest tests/ -v -m unit            # 只运行单元测试
+pytest tests/ -v -m api             # 只运行 API 测试
+pytest tests/ -v --cov=app --cov-report=html  # 生成覆盖率报告
 ```
 
 ### Docker 一键启动

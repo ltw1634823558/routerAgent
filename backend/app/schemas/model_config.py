@@ -1,11 +1,27 @@
-from pydantic import BaseModel, Field
+import re
+
+from pydantic import BaseModel, ConfigDict, Field, field_validator
 from typing import Optional, List, Dict, Any
 from datetime import datetime
 from app.models.model_config import ProviderEnum
 
 
+API_KEY_ENV_NAME_PATTERN = re.compile(r"^[A-Z][A-Z0-9_]*_API_KEY$")
+
+
+def validate_api_key_env_name(value: str) -> str:
+    value = value.strip()
+    if not API_KEY_ENV_NAME_PATTERN.fullmatch(value):
+        raise ValueError("API Key 环境变量名必须为大写字母、数字和下划线，且以 _API_KEY 结尾")
+    return value
+
+
+class SchemaBase(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+
 # ============ 模型配置 ============
-class ModelConfigCreate(BaseModel):
+class ModelConfigCreate(SchemaBase):
     name: str = Field(..., description="配置名称")
     provider: str = Field(..., description="提供商")
     model_name: str = Field(..., description="模型名称")
@@ -13,8 +29,13 @@ class ModelConfigCreate(BaseModel):
     api_key_env: str = Field(..., description="API KEY 环境变量名")
     is_default: bool = Field(False, description="是否默认")
 
+    @field_validator("api_key_env")
+    @classmethod
+    def validate_api_key_env(cls, value: str) -> str:
+        return validate_api_key_env_name(value)
 
-class ModelConfigUpdate(BaseModel):
+
+class ModelConfigUpdate(SchemaBase):
     name: Optional[str] = None
     provider: Optional[str] = None
     model_name: Optional[str] = None
@@ -22,8 +43,13 @@ class ModelConfigUpdate(BaseModel):
     api_key_env: Optional[str] = None
     is_default: Optional[bool] = None
 
+    @field_validator("api_key_env")
+    @classmethod
+    def validate_api_key_env(cls, value: Optional[str]) -> Optional[str]:
+        return validate_api_key_env_name(value) if value is not None else value
 
-class ModelConfigResponse(BaseModel):
+
+class ModelConfigResponse(SchemaBase):
     id: int
     name: str
     provider: str
@@ -39,18 +65,18 @@ class ModelConfigResponse(BaseModel):
 
 
 # ============ 搜索记录 ============
-class SearchRequest(BaseModel):
+class SearchRequest(SchemaBase):
     query: str = Field(..., description="搜索内容")
     engine: str = Field(..., description="搜索引擎")
     api_key: str = Field(..., description="搜索引擎 API KEY")
 
 
-class SearchResult(BaseModel):
+class SearchResult(SchemaBase):
     result: str
     sources: List[Dict[str, str]]
 
 
-class SearchRecordResponse(BaseModel):
+class SearchRecordResponse(SchemaBase):
     id: int
     query: str
     engine: str
@@ -63,16 +89,16 @@ class SearchRecordResponse(BaseModel):
 
 
 # ============ 提示词记录 ============
-class PromptRequest(BaseModel):
+class PromptRequest(SchemaBase):
     user_input: str = Field(..., description="用户描述")
     model_config_id: int = Field(..., description="模型配置ID")
 
 
-class PromptResponse(BaseModel):
+class PromptResponse(SchemaBase):
     generated_prompt: str
 
 
-class PromptRecordResponse(BaseModel):
+class PromptRecordResponse(SchemaBase):
     id: int
     user_input: str
     generated_prompt: str
@@ -83,7 +109,7 @@ class PromptRecordResponse(BaseModel):
 
 
 # ============ 知识库 ============
-class KnowledgeCreate(BaseModel):
+class KnowledgeCreate(SchemaBase):
     title: str
     content: str
     source: Optional[str] = None
@@ -92,7 +118,7 @@ class KnowledgeCreate(BaseModel):
     tags: Optional[List[str]] = None
 
 
-class KnowledgeResponse(BaseModel):
+class KnowledgeResponse(SchemaBase):
     id: int
     title: str
     content: str
@@ -107,19 +133,19 @@ class KnowledgeResponse(BaseModel):
 
 
 # ============ 试题 ============
-class QuizGenerateRequest(BaseModel):
+class QuizGenerateRequest(SchemaBase):
     category: Optional[str] = Field(None, description="技能分类")
     difficulty: str = Field("basic", description="难度")
     count: int = Field(5, ge=1, le=50, description="题数")
     model_config_id: int = Field(..., description="模型配置ID")
 
 
-class QuizSubmitRequest(BaseModel):
+class QuizSubmitRequest(SchemaBase):
     session_id: int
     answers: List[Dict[str, Any]]  # [{question_id, user_answer}]
 
 
-class QuizQuestionResponse(BaseModel):
+class QuizQuestionResponse(SchemaBase):
     id: int
     question: str
     question_type: str
@@ -131,7 +157,7 @@ class QuizQuestionResponse(BaseModel):
         from_attributes = True
 
 
-class QuizAnswerResponse(BaseModel):
+class QuizAnswerResponse(SchemaBase):
     question_id: int
     question: str
     user_answer: Optional[str]
@@ -140,7 +166,7 @@ class QuizAnswerResponse(BaseModel):
     is_correct: bool
 
 
-class QuizSessionResponse(BaseModel):
+class QuizSessionResponse(SchemaBase):
     id: int
     category: Optional[str]
     difficulty: Optional[str]

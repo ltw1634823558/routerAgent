@@ -1,8 +1,9 @@
 """
 测试运行脚本
-运行所有测试: python -m pytest tests/ -v
-运行特定类型测试: python -m pytest tests/ -v -m unit
-运行并生成覆盖率报告: python -m pytest tests/ -v --cov=app --cov-report=html
+PowerShell 激活环境: .\\.venv\\Scripts\\Activate.ps1
+运行所有测试: pytest tests/ -v
+运行特定类型测试: pytest tests/ -v -m unit
+运行并生成覆盖率报告: pytest tests/ -v --cov=app --cov-report=html
 """
 import subprocess
 import sys

@@ -12,10 +12,13 @@
 后端在 `backend/` 目录执行：
 
 ```bash
+py -3.10 -m venv .venv
+.\.venv\Scripts\Activate.ps1
+pip install --upgrade pip
 pip install -r requirements.txt
-uvicorn app.main:app --reload       # http://localhost:8000
-python -m pytest tests/ -v          # 全量测试
-python -m pytest tests/ -v --cov=app --cov-report=html
+uvicorn app.main:app --reload  # http://localhost:8000
+pytest tests/ -v               # 全量测试
+pytest tests/ -v --cov=app --cov-report=html
 ```
 
 前端在 `frontend/` 目录执行：
@@ -34,7 +37,7 @@ Python 使用 4 空格缩进、异步函数优先，模块/函数使用 `snake_c
 
 ## 测试指南
 
-测试框架为 pytest 与 pytest-asyncio，测试函数命名为 `test_<功能>_<场景>`。按需使用 `unit`、`integration`、`api`、`agent`、`websocket` 标记，例如 `python -m pytest tests/ -m api`。外部 LLM、搜索服务应使用 mock；测试默认使用 SQLite fixtures，不依赖本地 MySQL。新增或修改行为应补充对应测试，覆盖率建议保持 80% 以上。
+测试框架为 pytest 与 pytest-asyncio，测试函数命名为 `test_<功能>_<场景>`。按需使用 `unit`、`integration`、`api`、`agent`、`websocket` 标记，例如 `pytest tests/ -m api`。外部 LLM、搜索服务应使用 mock；测试默认使用 SQLite fixtures，不依赖本地 MySQL。新增或修改行为应补充对应测试，覆盖率建议保持 80% 以上。
 
 ## 提交与 Pull Request
 
