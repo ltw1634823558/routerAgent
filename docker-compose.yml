@@ -23,43 +23,6 @@ services:
       timeout: 5s
       retries: 5
 
-  # FastAPI 后端
-  backend:
-    build:
-      context: ./backend
-      dockerfile: Dockerfile
-    container_name: router-agent-backend
-    restart: unless-stopped
-    environment:
-      - MYSQL_HOST=mysql
-      - MYSQL_PORT=3306
-      - MYSQL_USER=root
-      - MYSQL_PASSWORD=root123
-      - MYSQL_DATABASE=router_agent
-    ports:
-      - "8000:8000"
-    volumes:
-      - ./backend:/app
-    depends_on:
-      mysql:
-        condition: service_healthy
-    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload
-
-  # Vue3 前端
-  frontend:
-    build:
-      context: ./frontend
-      dockerfile: Dockerfile
-    container_name: router-agent-frontend
-    restart: unless-stopped
-    ports:
-      - "5173:5173"
-    volumes:
-      - ./frontend:/app
-      - /app/node_modules
-    depends_on:
-      - backend
-    command: npm run dev -- --host
 
 volumes:
   mysql_data:

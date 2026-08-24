@@ -23,7 +23,7 @@ class ArxivCrawler(BaseCrawler):
         }
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout) headers=self.headers) as client:
+            async with httpx.AsyncClient(timeout=self.timeout, headers=self.headers) as client:
                 response = await client.get(base_url, params=params)
                 response.raise_for_status()
                 
@@ -50,12 +50,12 @@ class ArxivCrawler(BaseCrawler):
     
     async def _parse_entry(self, entry) -> Dict[str, Any]:
         """解析 arXiv 条目"""
-        ns = {"{http://www.w3.org/2005/Atom}"}
-        
-        title = entry.find(f"{ns}title").text or ""
-        summary = entry.find(f"{ns}summary").text or ""
-        published = entry.find(f"{ns}published").text or ""
-        link = entry.find(f"{ns}id").text or ""
+        ns = "http://www.w3.org/2005/Atom"
+
+        title = entry.find(f"{{{ns}}}title").text or ""
+        summary = entry.find(f"{{{ns}}}summary").text or ""
+        published = entry.find(f"{{{ns}}}published").text or ""
+        link = entry.find(f"{{{ns}}}id").text or ""
         
         # 清理文本
         title = re.sub(r'\s+', ' ', title).strip()

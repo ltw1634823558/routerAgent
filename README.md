@@ -125,7 +125,8 @@ SERPAPI_KEY=your_serpapi_key
 # 后端
 cd backend
 pip install -r requirements.txt
-uvicorn app.main:app --reload
+uvicorn app.main:app 
+
 
 # 前端
 cd frontend

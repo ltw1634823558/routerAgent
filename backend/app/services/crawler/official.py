@@ -7,16 +7,9 @@ from loguru import logger
 from app.services.crawler.base import BaseCrawler
 
 
-import re
-
-
-import os
-
-
 class OfficialCrawler(BaseCrawler):
     """官方文档爬虫"""
 
-    # 支持的平台配置
     PLATFORM_CONFIGS = {
         "zhipu": {
             "name": "智谱 AI",
@@ -60,7 +53,6 @@ class OfficialCrawler(BaseCrawler):
         },
     }
 
-    
     async def crawl(self, platform: str, max_docs: int = 3) -> List[Dict[str, Any]]:
         """爬取官方文档"""
         config = self.PLATFORM_CONFIGS.get(platform)
@@ -68,25 +60,23 @@ class OfficialCrawler(BaseCrawler):
             logger.warning(f"不支持的平台: {platform}")
             return []
 
-        
         results = []
         base_url = config["base_url"]
-        
+
         for path in config["paths"]:
             url = f"{base_url}{path}"
-            
+
             try:
                 docs = await self._crawl_docs(url, max_docs)
                 results.extend(docs)
             except Exception as e:
                 logger.error(f"爬取 {url} 失败: {e}")
                 continue
-        
+
+            if len(results) >= max_docs:
+                break
+
         await asyncio.sleep(0.5)
-                    if len(results) >= max_docs:
-                        break
-                return results
-        
         return results
 
     async def _crawl_docs(self, url: str, max_docs: int) -> List[Dict[str, Any]]:
@@ -95,18 +85,23 @@ class OfficialCrawler(BaseCrawler):
             async with httpx.AsyncClient(timeout=self.timeout, headers=self.headers) as client:
                 response = await client.get(url)
                 response.raise_for_status()
-                
+
                 soup = BeautifulSoup(response.text, "html.parser")
-                
+
                 # 提取标题
-                title = soup.find("h1").text.strip()
+                title = ""
+                h1 = soup.find("h1")
+                if h1:
+                    title = h1.text.strip()
                 if not title:
-                    title = soup.find("title").text.strip()
-                
+                    title_tag = soup.find("title")
+                    if title_tag:
+                        title = title_tag.text.strip()
+
                 # 提取内容
                 content_sections = soup.find_all(["article", "section", "div"])
                 content_parts = []
-                
+
                 for section in content_sections:
                     text = section.get_text().strip()
                     if text and len(text) > 100:
@@ -114,11 +109,9 @@ class OfficialCrawler(BaseCrawler):
                             "title": f"{title} - 部分 {section.name}",
                             "content": text,
                         })
-                
-                await asyncio.sleep(0.3)
-                    if len(content_parts) >= max_docs:
-                        break
-                
+                        if len(content_parts) >= max_docs:
+                            break
+
                 return content_parts
         except Exception as e:
             logger.error(f"解析文档失败 {url}: {e}")

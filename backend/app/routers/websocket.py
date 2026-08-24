@@ -7,8 +7,11 @@ from loguru import logger
 from datetime import datetime
 
 from app.database import async_session_maker
-from app.models.model_config import ModelConfig, SearchRecord, PromptRecord, QuizSession, QuizQuestion, QuizAttempt
- from app.agents import SearchAgent, PromptAgent, QuizAgent
+from app.models.model_config import (
+    ModelConfig, SearchRecord, PromptRecord,
+    KnowledgeBase, QuizSession, QuizQuestion, QuizAttempt,
+)
+from app.agents import SearchAgent, PromptAgent, QuizAgent
 
 
 router = APIRouter()
@@ -72,7 +75,7 @@ async def websocket_endpoint(websocket: WebSocket, agent_type: str):
                 await handle_quiz_agent(websocket, message)
             else:
                 await manager.send_json(
-                    {"error": f"未知的 Agent 类型: {agent_type}"},
+                    {"type": "error", "message": f"未知的 Agent 类型: {agent_type}"},
                     websocket,
                 )
 
@@ -80,66 +83,205 @@ async def websocket_endpoint(websocket: WebSocket, agent_type: str):
         manager.disconnect(websocket)
     except Exception as e:
         logger.error(f"WebSocket 错误: {e}")
-        await manager.send_json({"type": "error", "message": str(e)})
+        try:
+            await manager.send_json({"type": "error", "message": str(e)}, websocket)
+        except Exception:
+            pass
         manager.disconnect(websocket)
 
 
 async def handle_search_agent(websocket: WebSocket, message: dict):
     """处理搜索 Agent"""
-    query = message.get("query")
-    engine = message.get("engine", "duckduckgo")
-    api_key = message.get("api_key", "")
-    model_id = message.get("model_id")
+    try:
+        query = message.get("query")
+        engine = message.get("engine", "duckduckgo")
+        api_key = message.get("api_key", "")
+        model_id = message.get("model_id")
 
-    if not query:
-        await manager.send_json({"error": "请输入搜索内容"}, websocket)
-        return
+        if not query:
+            await manager.send_json({"type": "error", "message": "请输入搜索内容"}, websocket)
+            return
 
-    # 获取模型配置
-    model_config = await get_model_config(model_id)
-    if not model_config:
-        await manager.send_json({"error": "模型配置不存在"}, websocket)
-        return
+        # 获取模型配置
+        model_config = await get_model_config(model_id)
+        if not model_config:
+            await manager.send_json({"type": "error", "message": "模型配置不存在"}, websocket)
+            return
 
-    # 创建 Agent
-    agent = SearchAgent(model_config, engine, api_key)
+        # 创建 Agent
+        agent = SearchAgent(model_config, engine, api_key)
 
-    # 获取知识库上下文
-    async with async_session_maker() as db:
-        result = await db.execute(
-            select(KnowledgeBase)
-            .where(KnowledgeBase.category == category)
-            .limit(5)
-        )
-        context_parts = [kb.title, kb.content for kb in knowledge_base]
-        if category:
-            query = query
-            else:
-            query = "AI 技术相关"
+        full_result = ""
+        sources = []
 
-        # 生成知识库上下文
-        context_text = "\n\n".join([f"技能分类： {category}" for kb in context_parts])
-            logger.info(f"知识库上下文: {context_text[: 500} 字符")
+        async for chunk in agent.run(query):
+            full_result += chunk
+            await manager.send_json(
+                {"type": "chunk", "content": chunk},
+                websocket,
+            )
 
-            context = await db()
-            await db.flush()
+        # 保存搜索记录
+        async with async_session_maker() as db:
+            record = SearchRecord(
+                query=query,
+                engine=engine,
+                result=full_result,
+                sources=sources,
+                model_config_id=model_id,
+            )
+            db.add(record)
+            await db.commit()
 
+        await manager.send_json({"type": "done", "record_id": record.id}, websocket)
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"搜索 Agent 错误: {e}")
+        try:
+            await manager.send_json({"type": "error", "message": str(e)}, websocket)
+        except Exception:
+            pass
+        manager.disconnect(websocket)
+
+
+async def handle_prompt_agent(websocket: WebSocket, message: dict):
+    """处理提示词优化 Agent"""
+    try:
+        user_input = message.get("user_input")
+        model_id = message.get("model_id")
+
+        if not user_input:
+            await manager.send_json({"type": "error", "message": "请输入描述"}, websocket)
+            return
+
+        # 获取模型配置
+        model_config = await get_model_config(model_id)
+        if not model_config:
+            await manager.send_json({"type": "error", "message": "模型配置不存在"}, websocket)
+            return
+
+        # 创建 Agent
+        agent = PromptAgent(model_config)
+        full_result = ""
+        async for chunk in agent.run(user_input):
+            full_result += chunk
+            await manager.send_json(
+                {"type": "chunk", "content": chunk},
+                websocket,
+            )
+
+        # 保存记录
+        async with async_session_maker() as db:
+            record = PromptRecord(
+                user_input=user_input,
+                generated_prompt=full_result,
+                model_config_id=model_id,
+            )
+            db.add(record)
+            await db.commit()
+
+        # 发送完成信号
+        await manager.send_json({"type": "done", "record_id": record.id}, websocket)
+
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"提示词 Agent 错误: {e}")
+        try:
+            await manager.send_json({"type": "error", "message": str(e)}, websocket)
+        except Exception:
+            pass
+        manager.disconnect(websocket)
+
+
+async def handle_quiz_agent(websocket: WebSocket, message: dict):
+    """处理问答 Agent"""
+    action = message.get("action")
+
+    if action == "generate":
+        await generate_quiz(websocket, message)
+    elif action == "submit":
+        await submit_quiz(websocket, message)
+    else:
+        await manager.send_json({"type": "error", "message": "未知操作"}, websocket)
+
+
+async def generate_quiz(websocket: WebSocket, message: dict):
+    """生成试题"""
+    try:
+        category = message.get("category", "")
+        difficulty = message.get("difficulty", "basic")
+        count = message.get("count", 5)
+        model_id = message.get("model_id")
+        knowledge_context = message.get("knowledge_context", "")
+
+        if not model_id:
+            await manager.send_json({"type": "error", "message": "请选择模型"}, websocket)
+            return
+
+        # 获取模型配置
+        model_config = await get_model_config(model_id)
+        if not model_config:
+            await manager.send_json({"type": "error", "message": "模型配置不存在"}, websocket)
+            return
+
+        # 获取知识库上下文
+        async with async_session_maker() as db:
+            query = select(KnowledgeBase).order_by(KnowledgeBase.created_at.desc())
+            if category:
+                query = query.where(KnowledgeBase.category == category)
+            query = query.limit(3)
+            result = await db.execute(query)
+            knowledge_items = result.scalars().all()
+
+        context_parts = []
+        for kb in knowledge_items:
+            context_parts.append(f"标题: {kb.title}\n内容: {kb.content[:500]}")
+        context_text = "\n\n".join(context_parts)
+
+        if not knowledge_context:
+            knowledge_context = context_text
+
+        logger.info(f"知识库上下文: {len(knowledge_context)} 字符")
+
+        # 创建 Agent 并生成试题
+        agent = QuizAgent(model_config)
+        full_response = ""
+        async for chunk in agent.run(category, difficulty, count, knowledge_context):
+            full_response += chunk
+            await manager.send_json(
+                {"type": "chunk", "content": chunk},
+                websocket,
+            )
+
+        # 解析试题
+        questions_data = agent.parse_questions(full_response)
+        if not questions_data:
+            await manager.send_json(
+                {"type": "error", "message": "试题生成失败，请重试"},
+                websocket,
+            )
+            return
+
+        # 保存到数据库
+        async with async_session_maker() as db:
             # 创建会话
             session = QuizSession(
                 category=category,
                 difficulty=difficulty,
-                total_questions=len(questions),
+                total_questions=len(questions_data),
             )
             db.add(session)
             await db.flush()
 
             # 保存试题
-            question_ids = []
-            for q in questions:
+            saved_questions = []
+            for q in questions_data:
                 question = QuizQuestion(
-                    knowledge_id=knowledge.id,
                     question=q.get("question"),
-                    question_type=q.get("question_type"),
+                    question_type=q.get("type", q.get("question_type", "choice")),
                     options=q.get("options"),
                     answer=q.get("answer"),
                     explanation=q.get("explanation"),
@@ -148,7 +290,7 @@ async def handle_search_agent(websocket: WebSocket, message: dict):
                 )
                 db.add(question)
                 await db.flush()
-                question_ids.append(question.id)
+                saved_questions.append(question)
 
             await db.commit()
 
@@ -165,238 +307,126 @@ async def handle_search_agent(websocket: WebSocket, message: dict):
                     "difficulty": difficulty,
                     "category": category,
                 }
-                for q in questions
+                for q in saved_questions
             ],
         }, websocket)
 
-        )
-
     except WebSocketDisconnect:
         manager.disconnect(websocket)
     except Exception as e:
-        logger.error(f"WebSocket 错误: {e}")
-        await manager.send_json({"type": "error", "message": str(e)})
-        manager.disconnect(websocket)
-
-
-async def handle_prompt_agent(websocket: WebSocket, message: dict):
-    """处理提示词优化 Agent"""
-    user_input = message.get("user_input")
-    model_id = message.get("model_id")
-
-    if not user_input:
-        await manager.send_json({"error": "请输入描述"}, websocket)
-        return
-
-    # 获取模型配置
-    model_config = await get_model_config(model_id)
-    if not model_config:
-        await manager.send_json({"error": "模型配置不存在"}, websocket)
-        return
-
-    # 创建 Agent
-    agent = PromptAgent(model_config)
-    full_result = ""
-    async for chunk in agent.run(user_input):
-        full_result += chunk
-        await manager.send_json(
-            {"type": "chunk", "content": chunk},
-            websocket
-        )
-
-    # 保存记录
-    async with async_session_maker() as db:
-        record = PromptRecord(
-            user_input=user_input,
-            generated_prompt=full_result,
-            model_config_id=model_id,
-        )
-        db.add(record)
-        await db.commit()
-
-    # 发送完成信号
-    await manager.send_json({"type": "done", "record_id": record.id}, websocket)
-
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-    except Exception as e:
-        logger.error(f"WebSocket 错误: {e}")
-        await manager.send_json({"type": "error", "message": str(e)})
-        manager.disconnect(websocket)
-
-
-async def handle_quiz_agent(websocket: WebSocket, message: dict):
-    """处理问答 Agent"""
-    action = message.get("action")
-
-    if action == "generate":
-        await generate_quiz(websocket, message)
-    elif action == "submit":
-        await submit_quiz(websocket, message)
-    else:
-        await manager.send_json({"error": "未知操作"}, websocket)
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-    except Exception as e:
-        logger.error(f"WebSocket 错误: {e}")
-        await manager.send_json({"type": "error", "message": str(e)})
-        manager.disconnect(websocket)
-
-
-async def generate_quiz(websocket: WebSocket, message: dict):
-    """生成试题"""
-    category = message.get("category", "")
-    difficulty = message.get("difficulty", "basic")
-    count = message.get("count", 5)
-    model_id = message.get("model_id")
-    knowledge_context = message.get("knowledge_context", "")
-
-    if not model_id:
-        await manager.send_json({"error": "请选择模型"}, websocket)
-        return
-
-    # 获取模型配置
-    model_config = await get_model_config(model_id)
-    if not model_config:
-        await manager.send_json({"error": "模型配置不存在"}, websocket)
-        return
-
-    # 创建 Agent
-    agent = QuizAgent(model_config)
-
-    # 获取知识库上下文
-    async with async_session_maker() as db:
-        result = await db.execute(
-            select(KnowledgeBase)
-            .where(KnowledgeBase.category == category)
-            .limit(3)
-        )
-        context_text = "\n\n".join([f"标题: {kb.title}", kb.content for kb in context_parts])
-            if not category:
-                query = query
-
-                continue
-
-            context_text += f"\n\n来源: {kb.get('source', '未知')}\n\n"
-
-            logger.info(f"知识库上下文: {context_text[: 300} 字符")
-
-        if len(context_text) > 500:
-            context_text = context_text[: 500]
-
-            context_text = context_text[: 1000]
-
-            context_text = context_text[: 1000]
-
-            context_text = context_text[: 2000]
-        context_text += "\n\n"
-
-        await manager.send_json(
-            {
-                "type": "done",
-                "session_id": session.id,
-                "questions": [
-                    {
-                        "id": q.id,
-                        "question": q.question,
-                        "question_type": q.question_type,
-                        "options": q.options,
-                        "difficulty": difficulty,
-                        "category": category,
-                    }
-                    for q in questions
-                ],
-            }, websocket,
-        )
-
-    except WebSocketDisconnect:
-        manager.disconnect(websocket)
-    except Exception as e:
-        logger.error(f"WebSocket 错误: {e}")
-        await manager.send_json({"type": "error", "message": str(e)})
+        logger.error(f"生成试题错误: {e}")
+        try:
+            await manager.send_json({"type": "error", "message": str(e)}, websocket)
+        except Exception:
+            pass
         manager.disconnect(websocket)
 
 
 async def submit_quiz(websocket: WebSocket, message: dict):
     """提交答案"""
-    session_id = message.get("session_id")
-    answers = message.get("answers", [])  # [{question_id, user_answer}, ...]
-    if not session_id:
-        await manager.send_json({"error": "会话不存在"}, websocket)
-        return
+    try:
+        session_id = message.get("session_id")
+        answers = message.get("answers", [])  # [{question_id, user_answer}, ...]
 
-    async with async_session_maker() as db:
-        # 获取会话
-        result = await db.execute(
-            select(QuizSession).where(QuizSession.id == session_id)
-        )
-        session = result.scalar_one_or_none()
-        if not session:
-            await manager.send_json({"error": "会话不存在"}, websocket)
+        if not session_id:
+            await manager.send_json({"type": "error", "message": "会话不存在"}, websocket)
             return
 
-        # 获取会话的问题
-        result = await db.execute(
-            select(QuizQuestion).where(QuizQuestion.id == answer["question_id"])
-            questions = result.scalars().all()
-        if not questions:
-            await manager.send_json({"error": "会话没有问题"}, websocket)
-            return
-
-        # 统计正确数
-        correct_count = 0
-        results = []
-
-        for answer in answers:
-            question_id = answer.get("question_id")
-            user_answer = answer.get("user_answer")
-
-            # 获取题目
-            q_result = await db.execute(
-                select(QuizQuestion).where(QuizQuestion.id == question_id)
+        async with async_session_maker() as db:
+            # 获取会话
+            result = await db.execute(
+                select(QuizSession).where(QuizSession.id == session_id)
             )
-            question = q_result.scalar_one_or_none()
-            if not question:
-                continue
+            session = result.scalar_one_or_none()
+            if not session:
+                await manager.send_json({"type": "error", "message": "会话不存在"}, websocket)
+                return
 
-            # 判断是否正确
-            is_correct = str(user_answer).strip() == str(question.answer).strip()
-            if is_correct:
-                correct_count += 1
+            # 统计正确数
+            correct_count = 0
+            results = []
 
-            # 保存答题记录
-            attempt = QuizAttempt(
-                session_id=session_id,
-                question_id=question_id,
-                user_answer=user_answer,
-                is_correct=is_correct,
+            for answer in answers:
+                question_id = answer.get("question_id")
+                user_answer = answer.get("user_answer")
+
+                # 获取题目
+                q_result = await db.execute(
+                    select(QuizQuestion).where(QuizQuestion.id == question_id)
+                )
+                question = q_result.scalar_one_or_none()
+                if not question:
+                    continue
+
+                # 判断是否正确 - 对于选择题，正确答案可能是索引或文本
+                is_correct = False
+                correct_answer_display = question.answer
+
+                if question.question_type == "choice" and question.options:
+                    # 获取正确答案的选项文本
+                    try:
+                        # 尝试将 answer 解析为索引
+                        correct_idx = int(question.answer)
+                        correct_answer_display = question.options[correct_idx] if correct_idx < len(question.options) else question.answer
+                    except (ValueError, TypeError):
+                        # answer 本身就是文本
+                        correct_answer_display = question.answer
+
+                    # 比较用户答案和正确答案（支持索引或文本）
+                    is_correct = str(user_answer).strip() == str(correct_answer_display).strip()
+                    if not is_correct:
+                        # 也尝试用原始索引比较
+                        is_correct = str(user_answer).strip() == str(question.answer).strip()
+                else:
+                    # 非选择题直接比较
+                    is_correct = str(user_answer).strip() == str(question.answer).strip()
+
+                if is_correct:
+                    correct_count += 1
+
+                # 保存答题记录
+                attempt = QuizAttempt(
+                    session_id=session_id,
+                    question_id=question_id,
+                    user_answer=user_answer,
+                    is_correct=is_correct,
+                )
+                db.add(attempt)
+
+                results.append({
+                    "question_id": question_id,
+                    "question": question.question,
+                    "user_answer": user_answer,
+                    "correct_answer": correct_answer_display,
+                    "explanation": question.explanation,
+                    "is_correct": is_correct,
+                })
+
+            # 更新会话
+            session.correct_count = correct_count
+            session.score = round((correct_count / len(answers)) * 100, 2) if answers else 0
+            session.finished_at = datetime.now()
+
+            await db.commit()
+
+            # 发送结果
+            await manager.send_json(
+                {
+                    "type": "result",
+                    "score": session.score,
+                    "correct_count": correct_count,
+                    "total": len(answers),
+                    "results": results,
+                },
+                websocket,
             )
-            db.add(attempt)
 
-            results.append({
-                "question_id": question_id,
-                "question": question.question,
-                "user_answer": user_answer,
-                "correct_answer": question.answer,
-                "explanation": question.explanation,
-                "is_correct": is_correct,
-            })
-
-        # 更新会话
-        session.correct_count = correct_count
-        session.score = round((correct_count / len(answers)) * 100, 2) if answers else 0
-        session.finished_at = datetime.now()
-
-        await db.commit()
-
-        # 发送结果
-        await manager.send_json(
-            {
-                "type": "result",
-                "score": session.score,
-                "correct_count": correct_count,
-                "total": len(answers),
-                "results": results,
-            },
-            websocket,
-        )
+    except WebSocketDisconnect:
+        manager.disconnect(websocket)
+    except Exception as e:
+        logger.error(f"提交答案错误: {e}")
+        try:
+            await manager.send_json({"type": "error", "message": str(e)}, websocket)
+        except Exception:
+            pass
+        manager.disconnect(websocket)

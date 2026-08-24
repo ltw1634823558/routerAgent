@@ -11,10 +11,10 @@ import re
 
 
 class CSDNCrawler(BaseCrawler):
-    """CSDn 技术博客爬虫"""
+    """CSDN 技术博客爬虫"""
 
     async def crawl(self, keyword: str, max_pages: int = 3) -> List[Dict[str, Any]]:
-        """爬取 CSDn 技术博客"""
+        """爬取 CSDN 技术博客"""
         url = "https://so.csdn.net/api/v1/article/getlistArticleListByKeyword"
         params = {
             "keyword": keyword,
@@ -46,11 +46,11 @@ class CSDNCrawler(BaseCrawler):
             return results
 
         except Exception as e:
-            logger.error(f"爬取 CSDn 失败: {e}")
+            logger.error(f"爬取 CSDN 失败: {e}")
             return results
 
     async def _parse_article(self, article: dict) -> Dict[str, Any]:
-        """解析 CSDn 文章"""
+        """解析 CSDN 文章"""
         soup = BeautifulSoup(article.get("articleContent", ""), "html.parser")
         
         # 提取标题
@@ -65,12 +65,10 @@ class CSDNCrawler(BaseCrawler):
             text = div.get_text().strip()
             # 过滤广告和无关内容
             if text and len(text) > 100 and not any(
-                keyword.lower() in text.lower()
+                kw.lower() in text.lower()
                 for kw in ["推荐", "关注", "点赞", "评论", "收藏", "分享"]
             ):
-                if any(kw in text):
-                    continue
-            content_parts.append(text)
+                content_parts.append(text)
         
         return {
             "title": title,

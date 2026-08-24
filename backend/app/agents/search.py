@@ -63,6 +63,6 @@ class SearchAgent(BaseAgent):
 
         # 4. 输出参考链接
         yield "\n\n**参考来源:**\n"
-        for i, min(range(min(5, len(sources))), 1):
+        for i in range(1, min(5, len(sources)) + 1):
             source = sources[i - 1]
             yield f"{i}. [{source['title']}]({source['url']})\n"

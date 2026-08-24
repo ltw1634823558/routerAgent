@@ -2,6 +2,11 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from contextlib import asynccontextmanager
 from loguru import logger
+from dotenv import load_dotenv
+from pathlib import Path
+
+# 加载 .env 文件到系统环境变量
+load_dotenv(Path(__file__).parent.parent.parent / ".env")
 
 from app.database import init_db
 from app.routers import model, search, prompt, quiz, knowledge
@@ -28,7 +33,7 @@ app = FastAPI(
 # CORS 配置
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173", "*"],
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
