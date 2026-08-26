@@ -125,10 +125,14 @@
                 <h3>搜索结果</h3>
                 <p>AI 智能总结与答案</p>
               </div>
-              <div class="header-actions" v-if="result">
+              <div class="header-actions" v-if="result && !loading">
                 <el-button class="copy-btn" @click="copyResult">
                   <el-icon><CopyDocument /></el-icon>
                   复制
+                </el-button>
+                <el-button class="export-btn" @click="exportResult">
+                  <el-icon><Download /></el-icon>
+                  导出
                 </el-button>
               </div>
             </div>
@@ -169,6 +173,7 @@ const loading = ref(false)
 const models = ref<any[]>([])
 const history = ref<any[]>([])
 const result = ref('')
+const resultQuery = ref('')
 
 const form = ref({
   engine: 'bocha',  // 默认使用 Bocha（国内可用）
@@ -255,6 +260,7 @@ const doSearch = async () => {
 
   loading.value = true
   result.value = ''
+  resultQuery.value = form.value.query
 
   ws.value = new WebSocketClient(
     'search',
@@ -298,6 +304,25 @@ const copyResult = async () => {
   } catch {
     ElMessage.error('复制失败')
   }
+}
+
+const exportResult = () => {
+  const safeQuery = resultQuery.value
+    .trim()
+    .replace(/[\\/:*?"<>|]/g, '-')
+    .replace(/\s+/g, '-')
+    .slice(0, 50) || '搜索结果'
+  const blob = new Blob([result.value], { type: 'text/markdown;charset=utf-8' })
+  const url = URL.createObjectURL(blob)
+  const link = document.createElement('a')
+
+  link.href = url
+  link.download = `${safeQuery}.md`
+  document.body.appendChild(link)
+  link.click()
+  link.remove()
+  setTimeout(() => URL.revokeObjectURL(url), 100)
+  ElMessage.success('导出成功')
 }
 
 onMounted(() => {
@@ -384,6 +409,11 @@ onMounted(() => {
   border: none;
   border-radius: 8px;
   color: #6b7280;
+}
+
+.export-btn {
+  border: none;
+  border-radius: 8px;
 }
 
 .copy-btn:hover {
