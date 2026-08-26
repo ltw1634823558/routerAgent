@@ -57,7 +57,7 @@ CREATE TABLE IF NOT EXISTS quiz_questions (
     id INT AUTO_INCREMENT PRIMARY KEY,
     knowledge_id INT COMMENT '关联知识库',
     question TEXT NOT NULL COMMENT '题目',
-    question_type ENUM('choice', 'fill', 'code') NOT NULL COMMENT '题型',
+    question_type ENUM('choice', 'multiple_choice', 'fill', 'code') NOT NULL COMMENT '题型',
     options JSON COMMENT '选项（选择题）',
     answer TEXT NOT NULL COMMENT '答案',
     explanation TEXT COMMENT '解析',

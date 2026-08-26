@@ -21,9 +21,9 @@ class QuizAgent(BaseAgent):
   "questions": [
     {
       "question": "题目内容",
-      "type": "choice|fill|code",
+      "type": "choice|multiple_choice|fill|code",
       "options": ["选项A", "选项B", "选项C", "选项D"],
-      "answer": "正确答案",
+      "answer": "单选填一个答案，多选填答案数组",
       "explanation": "解析",
       "source": "出处"
     }
@@ -48,7 +48,7 @@ class QuizAgent(BaseAgent):
 知识库参考:
 {knowledge_context[:3000] if knowledge_context else "无"}
 
-请生成 {count} 面试题(JSON 格式): """
+请生成 {count} 面试题(JSON 格式)。选择题中请混合生成单选题和多选题；多选题必须使用 type="multiple_choice"，answer 必须是包含多个正确选项的数组。"""
 
         async for chunk in self.stream_response(prompt):
             yield chunk

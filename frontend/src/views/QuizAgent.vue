@@ -160,15 +160,18 @@
           <p class="question-text">{{ currentQuestion.question }}</p>
 
           <!-- 选择题 -->
-          <div v-if="currentQuestion.question_type === 'choice'" class="choice-options">
+          <div v-if="isChoiceQuestion(currentQuestion)" class="choice-options">
             <div
               v-for="(option, idx) in currentQuestion.options"
               :key="idx"
               class="choice-item"
-              :class="{ selected: userAnswer === idx }"
-              @click="userAnswer = idx"
+              :class="{ selected: isOptionSelected(idx) }"
+              @click="toggleOption(idx)"
             >
-              <span class="choice-letter">{{ String.fromCharCode(65 + idx) }}</span>
+              <span class="choice-letter" :class="{ checkbox: isMultipleChoice(currentQuestion) }">
+                <el-icon v-if="isMultipleChoice(currentQuestion) && isOptionSelected(idx)"><Check /></el-icon>
+                <span v-else>{{ String.fromCharCode(65 + idx) }}</span>
+              </span>
               <span class="choice-text">{{ option }}</span>
             </div>
           </div>
@@ -208,7 +211,7 @@
               class="dot"
               :class="{
                 active: idx === currentIndex,
-                answered: userAnswers[idx] !== null && idx !== currentIndex
+                answered: hasAnswer(userAnswers[idx], questions[idx]) && idx !== currentIndex
               }"
               @click="goToQuestion(idx)"
             />
@@ -421,6 +424,27 @@ const currentQuestion = computed(() => {
   return questions.value[currentIndex.value]
 })
 
+const isMultipleChoice = (question: any) => ['multiple_choice', 'multi_choice', 'multiple'].includes(question?.question_type)
+const isChoiceQuestion = (question: any) => question?.question_type === 'choice' || isMultipleChoice(question)
+const isOptionSelected = (idx: number) => isMultipleChoice(currentQuestion.value)
+  ? Array.isArray(userAnswer.value) && userAnswer.value.includes(idx)
+  : userAnswer.value === idx
+const hasAnswer = (answer: any, question: any) => isMultipleChoice(question)
+  ? Array.isArray(answer) && answer.length > 0
+  : answer !== null && answer !== undefined && answer !== ''
+
+const toggleOption = (idx: number) => {
+  if (!isMultipleChoice(currentQuestion.value)) {
+    userAnswer.value = idx
+    return
+  }
+  const selected = Array.isArray(userAnswer.value) ? [...userAnswer.value] : []
+  const position = selected.indexOf(idx)
+  if (position >= 0) selected.splice(position, 1)
+  else selected.push(idx)
+  userAnswer.value = selected.sort((a, b) => a - b)
+}
+
 const difficultyLabels: Record<string, string> = {
   basic: '基础',
   intermediate: '进阶',
@@ -513,8 +537,9 @@ const startQuiz = async () => {
       } else if (parsed.type === 'done') {
         questions.value = parsed.questions
         sessionId.value = parsed.session_id
-        userAnswers.value = new Array(parsed.questions.length).fill(null)
+        userAnswers.value = parsed.questions.map((question: any) => isMultipleChoice(question) ? [] : null)
         inQuiz.value = true
+        userAnswer.value = userAnswers.value[0]
         generating.value = false
       } else if (parsed.type === 'error') {
         ElMessage.error(parsed.message)
@@ -577,13 +602,15 @@ const submitQuiz = async () => {
       const rawAnswer = userAnswers.value[idx]
       // 对于选择题，将索引转换为选项文本
       let userAnswerText = rawAnswer
-      if (q.question_type === 'choice' && rawAnswer !== null && q.options) {
-        userAnswerText = q.options[rawAnswer] || rawAnswer
+      if (isChoiceQuestion(q) && rawAnswer !== null && q.options) {
+        userAnswerText = Array.isArray(rawAnswer)
+          ? rawAnswer.map((index) => q.options[index]).filter(Boolean)
+          : q.options[rawAnswer] || rawAnswer
       }
       return {
         question_id: q.id,
         user_answer: userAnswerText,
-        user_answer_index: q.question_type === 'choice' ? rawAnswer : null,
+        user_answer_index: isChoiceQuestion(q) ? rawAnswer : null,
       }
     }),
   })
@@ -885,6 +912,11 @@ onMounted(() => {
 .choice-item.selected .choice-letter {
   background: linear-gradient(135deg, #f97316 0%, #ea580c 100%);
   color: #fff;
+}
+
+.choice-letter.checkbox {
+  border-radius: 7px;
+  font-size: 16px;
 }
 
 .choice-text {

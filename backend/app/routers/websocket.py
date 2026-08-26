@@ -39,6 +39,9 @@ class ConnectionManager:
 manager = ConnectionManager()
 
 
+MULTIPLE_CHOICE_TYPES = {"multiple_choice", "multi_choice", "multiple"}
+
+
 def _choice_answer_index(answer, options):
     """将选择题答案统一解析为选项索引，无法解析时返回 None。"""
     if answer is None or not options:
@@ -62,6 +65,52 @@ def _choice_answer_index(answer, options):
 
 
 _parse_choice_index = _choice_answer_index
+
+
+def _choice_answer_indices(answer, options):
+    """将单个或多个选择答案统一解析为排序后的选项索引。"""
+    if answer is None or not options:
+        return []
+    if isinstance(answer, (list, tuple, set)):
+        values = list(answer)
+    elif isinstance(answer, str):
+        text = answer.strip()
+        if not text:
+            return []
+        try:
+            parsed = json.loads(text)
+            values = parsed if isinstance(parsed, list) else [parsed]
+        except (TypeError, ValueError, json.JSONDecodeError):
+            values = [part.strip() for part in text.replace("，", ",").split(",") if part.strip()]
+    else:
+        values = [answer]
+
+    indices = []
+    for value in values:
+        index = _choice_answer_index(value, options)
+        if index is not None and index not in indices:
+            indices.append(index)
+    return sorted(indices)
+
+
+def _is_multiple_choice(question_type, answer):
+    if question_type in MULTIPLE_CHOICE_TYPES or isinstance(answer, (list, tuple, set)):
+        return True
+    if isinstance(answer, str):
+        text = answer.strip()
+        if text.startswith("[") and text.endswith("]"):
+            try:
+                return isinstance(json.loads(text), list)
+            except (TypeError, ValueError, json.JSONDecodeError):
+                return False
+    return False
+
+
+def _serialize_question_answer(answer):
+    """将多选答案转换为 TEXT 字段可保存的 JSON 字符串。"""
+    if isinstance(answer, (list, tuple, set)):
+        return json.dumps(list(answer), ensure_ascii=False)
+    return answer
 
 
 async def get_model_config(model_id: int) -> dict | None:
@@ -304,11 +353,16 @@ async def generate_quiz(websocket: WebSocket, message: dict):
             # 保存试题
             saved_questions = []
             for q in questions_data:
+                question_type = q.get("type", q.get("question_type", "choice"))
+                question_answer = q.get("answer")
+                if _is_multiple_choice(question_type, question_answer):
+                    question_type = "multiple_choice"
+                question_answer = _serialize_question_answer(question_answer)
                 question = QuizQuestion(
                     question=q.get("question"),
-                    question_type=q.get("type", q.get("question_type", "choice")),
+                    question_type=question_type,
                     options=q.get("options"),
-                    answer=q.get("answer"),
+                    answer=question_answer,
                     explanation=q.get("explanation"),
                     difficulty=difficulty,
                     category=category,
@@ -387,30 +441,39 @@ async def submit_quiz(websocket: WebSocket, message: dict):
                 is_correct = False
                 correct_answer_display = question.answer
 
-                if question.question_type == "choice" and question.options:
+                if question.question_type in {"choice", *MULTIPLE_CHOICE_TYPES} and question.options:
+                    is_multiple = _is_multiple_choice(question.question_type, question.answer)
+                    correct_idx = None
+                    correct_indices = []
                     # 获取正确答案的选项文本
                     try:
-                        # 尝试将 answer 解析为索引
-                        correct_idx = _parse_choice_index(question.answer, question.options)
-                        correct_answer_display = question.options[correct_idx] if correct_idx is not None else question.answer
+                        if is_multiple:
+                            correct_indices = _choice_answer_indices(question.answer, question.options)
+                            correct_answer_display = [question.options[index] for index in correct_indices]
+                        else:
+                            correct_idx = _parse_choice_index(question.answer, question.options)
+                            correct_answer_display = question.options[correct_idx] if correct_idx is not None else question.answer
                     except (ValueError, TypeError):
                         # answer 本身就是文本
                         correct_answer_display = question.answer
 
                     # 比较用户答案和正确答案（支持索引或文本）
-                    user_idx = _parse_choice_index(
-                        answer.get("user_answer_index", user_answer), question.options
-                    )
-                    is_correct = (
-                        correct_idx is not None and user_idx is not None
-                        and correct_idx == user_idx
-                    )
-                    if not is_correct:
-                        # 也尝试用原始索引比较
+                    submitted_answer = answer.get("user_answer_index", user_answer)
+                    if is_multiple:
+                        user_indices = _choice_answer_indices(submitted_answer, question.options)
+                        is_correct = user_indices == correct_indices
+                    else:
+                        user_idx = _parse_choice_index(submitted_answer, question.options)
                         is_correct = (
-                            str(user_answer).strip().casefold()
-                            == str(question.answer).strip().casefold()
+                            correct_idx is not None and user_idx is not None
+                            and correct_idx == user_idx
                         )
+                        if not is_correct:
+                            # 也尝试用原始索引比较
+                            is_correct = (
+                                str(user_answer).strip().casefold()
+                                == str(question.answer).strip().casefold()
+                            )
                 else:
                     # 非选择题直接比较
                     is_correct = str(user_answer).strip() == str(question.answer).strip()
@@ -419,10 +482,13 @@ async def submit_quiz(websocket: WebSocket, message: dict):
                     correct_count += 1
 
                 # 保存答题记录
+                stored_user_answer = user_answer
+                if isinstance(user_answer, (list, tuple, set)):
+                    stored_user_answer = ", ".join(str(item) for item in user_answer)
                 attempt = QuizAttempt(
                     session_id=session_id,
                     question_id=question_id,
-                    user_answer=user_answer,
+                    user_answer=stored_user_answer,
                     is_correct=is_correct,
                 )
                 db.add(attempt)
@@ -430,6 +496,7 @@ async def submit_quiz(websocket: WebSocket, message: dict):
                 results.append({
                     "question_id": question_id,
                     "question": question.question,
+                    "question_type": question.question_type,
                     "user_answer": user_answer,
                     "correct_answer": correct_answer_display,
                     "explanation": question.explanation,

@@ -26,6 +26,7 @@ class SourceTypeEnum(enum.Enum):
 
 class QuestionTypeEnum(enum.Enum):
     CHOICE = "choice"
+    MULTIPLE_CHOICE = "multiple_choice"
     FILL = "fill"
     CODE = "code"
 

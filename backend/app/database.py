@@ -1,4 +1,5 @@
 from sqlalchemy.ext.asyncio import create_async_engine, AsyncSession, async_sessionmaker
+from sqlalchemy import text
 from sqlalchemy.orm import DeclarativeBase
 from loguru import logger
 
@@ -28,6 +29,24 @@ async def init_db():
     """初始化数据库表"""
     async with engine.begin() as conn:
         await conn.run_sync(Base.metadata.create_all)
+
+        # 旧版 MySQL 初始化脚本只允许单选题；为已有数据库补充多选题类型。
+        if conn.dialect.name == "mysql":
+            result = await conn.execute(text("""
+                SELECT COLUMN_TYPE
+                FROM information_schema.COLUMNS
+                WHERE TABLE_SCHEMA = DATABASE()
+                  AND TABLE_NAME = 'quiz_questions'
+                  AND COLUMN_NAME = 'question_type'
+            """))
+            column_type = result.scalar_one_or_none() or ""
+            if "multiple_choice" not in column_type:
+                await conn.execute(text("""
+                    ALTER TABLE quiz_questions
+                    MODIFY COLUMN question_type
+                    ENUM('choice', 'multiple_choice', 'fill', 'code')
+                    NOT NULL COMMENT '题型'
+                """))
         logger.info("数据库表创建/检查完成")
 
 
