@@ -1,27 +1,42 @@
 <template>
   <div class="page-container">
-    <!-- 顶部统计卡片 -->
+    <header class="page-header">
+      <div class="page-heading">
+        <div class="page-icon">
+          <el-icon><Setting /></el-icon>
+        </div>
+        <div>
+          <h1>模型配置</h1>
+          <p>统一管理 Agent 使用的模型服务与 API 配置</p>
+        </div>
+      </div>
+      <el-button type="primary" class="add-btn" @click="openCreateDialog">
+        <el-icon><Plus /></el-icon>
+        添加模型
+      </el-button>
+    </header>
+
     <div class="stats-row">
-      <div class="stat-card stat-total">
-        <div class="stat-icon">
+      <div class="stat-card">
+        <div class="stat-icon total-icon">
           <el-icon><Collection /></el-icon>
         </div>
         <div class="stat-info">
           <span class="stat-value">{{ models.length }}</span>
-          <span class="stat-label">模型总数</span>
+          <span class="stat-label">模型配置</span>
         </div>
       </div>
-      <div class="stat-card stat-active">
-        <div class="stat-icon">
-          <el-icon><CircleCheck /></el-icon>
+      <div class="stat-card">
+        <div class="stat-icon provider-icon">
+          <el-icon><Connection /></el-icon>
         </div>
         <div class="stat-info">
-          <span class="stat-value">{{ activeCount }}</span>
-          <span class="stat-label">已配置</span>
+          <span class="stat-value">{{ providerCount }}</span>
+          <span class="stat-label">服务提供商</span>
         </div>
       </div>
-      <div class="stat-card stat-default">
-        <div class="stat-icon">
+      <div class="stat-card default-stat">
+        <div class="stat-icon default-icon">
           <el-icon><Star /></el-icon>
         </div>
         <div class="stat-info">
@@ -31,185 +46,123 @@
       </div>
     </div>
 
-    <!-- 模型列表 -->
-    <el-card class="model-card">
-      <template #header>
-        <div class="card-header">
-          <div class="header-title">
-            <h2>🤖 模型配置管理</h2>
-            <p class="header-desc">配置和管理您的 AI 模型 API</p>
-          </div>
-          <el-button type="primary" class="add-btn" @click="showDialog = true">
-            <el-icon><Plus /></el-icon>
-            添加模型
-          </el-button>
+    <section class="model-panel">
+      <div class="panel-toolbar">
+        <div class="panel-title">
+          <h2>模型列表</h2>
+          <span>{{ filteredModels.length }} 项</span>
         </div>
-      </template>
+        <div class="filters">
+          <el-input
+            v-model="keyword"
+            clearable
+            class="search-input"
+            placeholder="搜索配置或模型名称"
+          >
+            <template #prefix><el-icon><Search /></el-icon></template>
+          </el-input>
+          <el-select v-model="providerFilter" clearable class="provider-filter" placeholder="全部提供商">
+            <el-option
+              v-for="provider in providers"
+              :key="provider.value"
+              :label="provider.label"
+              :value="provider.value"
+            />
+          </el-select>
+        </div>
+      </div>
 
-      <el-table :data="models" v-loading="loading" class="model-table">
-        <el-table-column prop="name" label="配置名称" min-width="150">
+      <el-table :data="filteredModels" v-loading="loading" class="model-table" empty-text="暂无匹配的模型配置">
+        <el-table-column prop="name" label="配置名称" min-width="190">
           <template #default="{ row }">
             <div class="model-name">
-              <span class="model-dot" :style="{ background: getProviderColor(row.provider) }"></span>
-              {{ row.name }}
+              <span class="model-mark" :style="{ color: getProviderColor(row.provider), backgroundColor: `${getProviderColor(row.provider)}14` }">
+                <el-icon><Cpu /></el-icon>
+              </span>
+              <div class="model-name-text">
+                <strong>{{ row.name }}</strong>
+                <span v-if="row.is_default">默认使用</span>
+              </div>
             </div>
           </template>
         </el-table-column>
-        <el-table-column prop="provider" label="提供商" min-width="120">
+        <el-table-column prop="provider" label="提供商" min-width="130">
           <template #default="{ row }">
-            <el-tag class="provider-tag" :style="{ background: getProviderColor(row.provider), borderColor: getProviderColor(row.provider) }">
+            <el-tag class="provider-tag" :style="{ color: getProviderColor(row.provider), backgroundColor: `${getProviderColor(row.provider)}12`, borderColor: `${getProviderColor(row.provider)}32` }">
               {{ getProviderLabel(row.provider) }}
             </el-tag>
           </template>
         </el-table-column>
-        <el-table-column prop="model_name" label="模型名称" min-width="140">
+        <el-table-column prop="model_name" label="模型标识" min-width="160">
           <template #default="{ row }">
             <code class="model-code">{{ row.model_name }}</code>
           </template>
         </el-table-column>
-        <el-table-column prop="api_url" label="API 地址" min-width="200" show-overflow-tooltip>
+        <el-table-column prop="api_url" label="API 地址" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">
-            <span class="api-url">{{ row.api_url }}</span>
+            <div class="api-url"><el-icon><Link /></el-icon><span>{{ row.api_url }}</span></div>
           </template>
         </el-table-column>
-        <el-table-column prop="is_default" label="状态" width="120" align="center">
-          <template #default="{ row }">
-            <div v-if="row.is_default" class="default-badge">
-              <el-icon><Star /></el-icon>
-              <span>默认</span>
-            </div>
-            <span v-else class="status-normal">-</span>
-          </template>
-        </el-table-column>
-        <el-table-column label="操作" width="220" align="center">
+        <el-table-column label="操作" width="148" align="right" fixed="right">
           <template #default="{ row }">
             <div class="action-btns">
-              <el-button class="action-btn edit" @click="editModel(row)">
-                <el-icon><Edit /></el-icon>
-                编辑
-              </el-button>
-              <el-button
-                v-if="!row.is_default"
-                class="action-btn default"
-                @click="setDefault(row)"
-              >
-                <el-icon><Star /></el-icon>
-                设为默认
-              </el-button>
-              <el-button class="action-btn delete" @click="deleteModel(row)">
-                <el-icon><Delete /></el-icon>
-              </el-button>
+              <el-tooltip content="编辑配置" placement="top">
+                <el-button class="action-btn" aria-label="编辑配置" @click="editModel(row)"><el-icon><Edit /></el-icon></el-button>
+              </el-tooltip>
+              <el-tooltip v-if="!row.is_default" content="设为默认模型" placement="top">
+                <el-button class="action-btn default" aria-label="设为默认模型" @click="setDefault(row)"><el-icon><Star /></el-icon></el-button>
+              </el-tooltip>
+              <el-tooltip content="删除配置" placement="top">
+                <el-button class="action-btn delete" aria-label="删除配置" @click="deleteModel(row)"><el-icon><Delete /></el-icon></el-button>
+              </el-tooltip>
             </div>
           </template>
         </el-table-column>
       </el-table>
-    </el-card>
+    </section>
 
-    <!-- 添加/编辑弹窗 -->
     <el-dialog
       v-model="showDialog"
-      :title="isEdit ? '✏️ 编辑模型' : '➕ 添加模型'"
-      width="550px"
+      :title="isEdit ? '编辑模型配置' : '添加模型配置'"
+      width="640px"
       class="model-dialog"
       :close-on-click-modal="false"
+      @closed="resetForm"
     >
-      <el-form :model="form" label-width="100px" class="model-form">
-        <el-form-item label="配置名称" required>
-          <el-input v-model="form.name" placeholder="如：智谱 GLM-4">
-            <template #prefix>
-              <el-icon><Document /></el-icon>
-            </template>
-          </el-input>
-        </el-form-item>
-        <el-form-item label="提供商" required>
+      <p class="dialog-desc">填写模型服务信息，API Key 的实际值由后端环境变量读取。</p>
+      <el-form :model="form" label-position="top" class="model-form">
+        <div class="form-grid">
+          <el-form-item label="配置名称" required>
+            <el-input v-model="form.name" placeholder="如：生产环境 GLM-4" />
+          </el-form-item>
+          <el-form-item label="提供商" required>
           <el-select v-model="form.provider" placeholder="选择提供商" style="width: 100%">
-            <el-option label="智谱 AI" value="zhipu">
+            <el-option v-for="provider in providers" :key="provider.value" :label="provider.label" :value="provider.value">
               <div class="provider-option">
-                <span class="provider-dot" style="background: #10b981"></span>
-                智谱 AI
-              </div>
-            </el-option>
-            <el-option label="阿里通义" value="alibaba">
-              <div class="provider-option">
-                <span class="provider-dot" style="background: #f97316"></span>
-                阿里通义
-              </div>
-            </el-option>
-            <el-option label="百度文心" value="baidu">
-              <div class="provider-option">
-                <span class="provider-dot" style="background: #3b82f6"></span>
-                百度文心
-              </div>
-            </el-option>
-            <el-option label="讯飞星火" value="xunfei">
-              <div class="provider-option">
-                <span class="provider-dot" style="background: #ec4899"></span>
-                讯飞星火
-              </div>
-            </el-option>
-            <el-option label="腾讯混元" value="tencent">
-              <div class="provider-option">
-                <span class="provider-dot" style="background: #06b6d4"></span>
-                腾讯混元
-              </div>
-            </el-option>
-            <el-option label="月之暗面" value="moonshot">
-              <div class="provider-option">
-                <span class="provider-dot" style="background: #8b5cf6"></span>
-                月之暗面
-              </div>
-            </el-option>
-            <el-option label="MiniMax" value="minimax">
-              <div class="provider-option">
-                <span class="provider-dot" style="background: #f59e0b"></span>
-                MiniMax
-              </div>
-            </el-option>
-            <el-option label="DeepSeek" value="deepseek">
-              <div class="provider-option">
-                <span class="provider-dot" style="background: #ef4444"></span>
-                DeepSeek
-              </div>
-            </el-option>
-            <el-option label="自定义" value="custom">
-              <div class="provider-option">
-                <span class="provider-dot" style="background: #6b7280"></span>
-                自定义
+                <span class="provider-dot" :style="{ background: provider.color }"></span>
+                {{ provider.label }}
               </div>
             </el-option>
           </el-select>
-        </el-form-item>
-        <el-form-item label="模型名称" required>
-          <el-input v-model="form.model_name" placeholder="如：glm-4">
-            <template #prefix>
-              <el-icon><Cpu /></el-icon>
-            </template>
-          </el-input>
-        </el-form-item>
+          </el-form-item>
+          <el-form-item label="模型名称" required>
+            <el-input v-model="form.model_name" placeholder="如：glm-4" />
+          </el-form-item>
+          <el-form-item label="API Key 环境变量名" required>
+            <el-input v-model="form.api_key_env" placeholder="如：ZHIPU_API_KEY" />
+          </el-form-item>
+        </div>
         <el-form-item label="API 地址" required>
-          <el-input v-model="form.api_url" placeholder="如：https://open.bigmodel.cn/api/paas/v4">
-            <template #prefix>
-              <el-icon><Link /></el-icon>
-            </template>
-          </el-input>
-        </el-form-item>
-        <el-form-item label="API Key 环境变量名" required>
-          <el-input
-            v-model="form.api_key_env"
-            placeholder="环境变量名，如：ZHIPU_API_KEY"
-          >
-            <template #prefix>
-              <el-icon><Key /></el-icon>
-            </template>
-          </el-input>
+          <el-input v-model="form.api_url" placeholder="如：https://open.bigmodel.cn/api/paas/v4" />
           <div class="form-tip">
             <el-icon><InfoFilled /></el-icon>
             请在 .env 文件中配置对应的环境变量值
           </div>
         </el-form-item>
-        <el-form-item label="设为默认">
-          <el-switch v-model="form.is_default" active-color="#667eea" />
-        </el-form-item>
+        <div class="default-setting">
+          <div><strong>设为默认模型</strong><span>新建 Agent 任务时优先使用此配置</span></div>
+          <el-switch v-model="form.is_default" />
+        </div>
       </el-form>
       <template #footer>
         <div class="dialog-footer">
@@ -235,6 +188,8 @@ const models = ref<any[]>([])
 const showDialog = ref(false)
 const isEdit = ref(false)
 const editId = ref<number | null>(null)
+const keyword = ref('')
+const providerFilter = ref('')
 
 const form = ref({
   name: '',
@@ -245,7 +200,7 @@ const form = ref({
   is_default: false,
 })
 
-const activeCount = computed(() => models.value.filter(m => m.api_key_env).length)
+const providerCount = computed(() => new Set(models.value.map(m => m.provider)).size)
 const defaultModel = computed(() => models.value.find(m => m.is_default))
 
 const providerLabels: Record<string, string> = {
@@ -272,6 +227,21 @@ const providerColors: Record<string, string> = {
   custom: '#6b7280',
 }
 
+const providers = Object.entries(providerLabels).map(([value, label]) => ({
+  value,
+  label,
+  color: providerColors[value],
+}))
+
+const filteredModels = computed(() => {
+  const search = keyword.value.trim().toLowerCase()
+  return models.value.filter((model) => {
+    const matchesProvider = !providerFilter.value || model.provider === providerFilter.value
+    const matchesSearch = !search || [model.name, model.model_name, model.api_url].some((value) => String(value || '').toLowerCase().includes(search))
+    return matchesProvider && matchesSearch
+  })
+})
+
 const getProviderLabel = (provider: string) => providerLabels[provider] || provider
 const getProviderColor = (provider: string) => providerColors[provider] || '#6b7280'
 
@@ -293,6 +263,11 @@ const editModel = (row: any) => {
   showDialog.value = true
 }
 
+const openCreateDialog = () => {
+  resetForm()
+  showDialog.value = true
+}
+
 const saveModel = async () => {
   if (!form.value.name || !form.value.provider || !form.value.model_name) {
     ElMessage.warning('请填写必填项')
@@ -310,7 +285,6 @@ const saveModel = async () => {
     }
     showDialog.value = false
     loadModels()
-    resetForm()
   } catch (e: any) {
     ElMessage.error(e.message)
   } finally {
@@ -655,5 +629,65 @@ onMounted(loadModels)
 
 .save-btn:hover {
   box-shadow: 0 4px 15px rgba(102, 126, 234, 0.4);
+}
+
+/* 模型配置页布局优化 */
+.page-container { min-height: 100%; }
+.page-header { display:flex; justify-content:space-between; align-items:center; margin-bottom:22px; }
+.page-heading { display:flex; align-items:center; gap:14px; }
+.page-icon { width:44px; height:44px; display:grid; place-items:center; border-radius:12px; background:#eaf2ff; color:#356ae6; font-size:21px; }
+.page-heading h1 { margin:0; color:#172033; font-size:24px; }
+.page-heading p { margin:5px 0 0; color:#7b8496; font-size:13px; }
+.stats-row { gap:14px; margin-bottom:18px; }
+.stat-card { border:1px solid #e9edf4; box-shadow:0 2px 8px rgba(29,42,68,.035); padding:15px 18px; }
+.default-stat { flex:1.3; }
+.total-icon { background:#eaf2ff !important; color:#356ae6; }
+.provider-icon { background:#eaf8f2 !important; color:#15966b; }
+.default-icon { background:#fff5dc !important; color:#c98308; }
+.model-panel { overflow:hidden; border:1px solid #e9edf4; border-radius:14px; background:#fff; box-shadow:0 5px 22px rgba(29,42,68,.045); }
+.panel-toolbar { display:flex; justify-content:space-between; align-items:center; gap:20px; padding:17px 20px; border-bottom:1px solid #eef1f5; }
+.panel-title { display:flex; align-items:baseline; gap:9px; }
+.panel-title h2 { margin:0; color:#202a3b; font-size:16px; }
+.panel-title span { color:#98a1b2; font-size:12px; }
+.filters { display:flex; gap:10px; }
+.search-input { width:230px; }
+.provider-filter { width:135px; }
+.add-btn { background:#356ae6; border:none; border-radius:8px; padding:9px 16px; }
+.add-btn:hover { background:#2857c7; }
+.model-table :deep(.el-table__inner-wrapper::before) { display:none; }
+.model-table :deep(.el-table__header th) { padding:13px 0; }
+.model-table :deep(.el-table__body td) { padding:14px 0; }
+.model-mark { width:32px; height:32px; display:grid; place-items:center; border-radius:8px; font-size:16px; }
+.model-name-text { display:flex; flex-direction:column; gap:3px; }
+.model-name-text strong { font-size:13px; font-weight:600; }
+.model-name-text span { color:#15966b; font-size:11px; }
+.provider-tag { border-radius:5px; }
+.api-url { display:flex; align-items:center; gap:6px; }
+.api-url .el-icon { color:#a7afbd; }
+.action-btns { gap:4px; }
+.action-btn { width:30px; height:30px; padding:0; border:1px solid transparent; }
+.action-btn:hover { border-color:currentColor; }
+.dialog-desc { margin:-8px 0 20px; color:#7b8496; font-size:13px; }
+.model-form :deep(.el-form-item) { margin-bottom:18px; }
+.model-form :deep(.el-form-item__label) { padding-bottom:6px; color:#4b5567; font-size:13px; font-weight:600; }
+.form-grid { display:grid; grid-template-columns:1fr 1fr; column-gap:18px; }
+.default-setting { display:flex; justify-content:space-between; align-items:center; margin-top:4px; padding:13px 14px; border:1px solid #e9edf4; border-radius:9px; background:#fafbfc; }
+.default-setting div { display:flex; flex-direction:column; gap:3px; }
+.default-setting strong { color:#2b3445; font-size:13px; }
+.default-setting span { color:#9099aa; font-size:12px; }
+@media (max-width:900px) {
+  .stats-row { flex-wrap:wrap; }
+  .stat-card, .default-stat { flex:1 1 calc(50% - 8px); }
+  .panel-toolbar { align-items:flex-start; flex-direction:column; }
+  .filters { width:100%; }
+  .search-input, .provider-filter { flex:1; width:auto; }
+}
+@media (max-width:600px) {
+  .page-header { align-items:stretch; flex-direction:column; gap:16px; }
+  .add-btn { width:100%; }
+  .stat-card, .default-stat { flex-basis:100%; }
+  .filters { flex-direction:column; }
+  .search-input, .provider-filter { width:100%; }
+  .form-grid { grid-template-columns:1fr; }
 }
 </style>
