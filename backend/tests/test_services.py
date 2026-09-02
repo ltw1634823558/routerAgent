@@ -146,6 +146,81 @@ class TestSearchEngines:
 
     @pytest.mark.unit
     @pytest.mark.asyncio
+    async def test_duckduckgo_html_backend_success_does_not_hit_api(self):
+        """HTML 后端成功时不应继续请求会触发限流的 API 后端。"""
+        from app.services.search.engines import DuckDuckGoEngine
+
+        engine = DuckDuckGoEngine()
+        results = [{"title": "结果", "href": "https://example.com", "body": "摘要"}]
+
+        with patch.object(engine, "_search_sync", return_value=results) as mock_search:
+            result = await engine.search("测试查询")
+
+        assert result["success"] is True
+        assert result["results"][0]["url"] == "https://example.com"
+        assert mock_search.call_count == 1
+        assert mock_search.call_args.args[3] == "html"
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_duckduckgo_rate_limit_falls_back_to_lite_backend(self):
+        """HTML 后端限流时应切换到 lite 后端。"""
+        from app.services.search.engines import DuckDuckGoEngine
+
+        engine = DuckDuckGoEngine()
+        results = [{"title": "备用结果", "href": "https://example.com/lite", "body": "摘要"}]
+
+        with patch.object(
+            engine,
+            "_search_sync",
+            side_effect=[Exception("DuckDuckGoSearchException: Ratelimit"), results],
+        ) as mock_search:
+            result = await engine.search("测试查询")
+
+        assert result["success"] is True
+        assert result["results"][0]["url"] == "https://example.com/lite"
+        assert mock_search.call_count == 2
+        assert [call.args[3] for call in mock_search.call_args_list] == ["html", "lite"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_duckduckgo_all_backends_rate_limited_returns_friendly_error(self):
+        """所有后端均限流时应返回明确提示，而不是暴露原始异常。"""
+        from app.services.search.engines import DuckDuckGoEngine
+
+        engine = DuckDuckGoEngine()
+        with patch.object(
+            engine,
+            "_search_sync",
+            side_effect=[
+                Exception("_get_url() https://html.duckduckgo.com/html DuckDuckGoSearchException: Ratelimit"),
+                Exception("_get_url() https://lite.duckduckgo.com/lite DuckDuckGoSearchException: Ratelimit"),
+                Exception("_get_url() https://links.duckduckgo.com/d.js DuckDuckGoSearchException: Ratelimit"),
+            ],
+        ) as mock_search:
+            result = await engine.search("测试查询")
+
+        assert result["success"] is False
+        assert "请求过于频繁" in result["error"]
+        assert mock_search.call_count == 3
+        assert [call.args[3] for call in mock_search.call_args_list] == ["html", "lite", "api"]
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
+    async def test_duckduckgo_empty_query_fails_without_request(self):
+        """空关键词应直接返回错误，不创建网络请求。"""
+        from app.services.search.engines import DuckDuckGoEngine
+
+        engine = DuckDuckGoEngine()
+        with patch.object(engine, "_search_sync") as mock_search:
+            result = await engine.search("   ")
+
+        assert result["success"] is False
+        assert "关键词不能为空" in result["error"]
+        mock_search.assert_not_called()
+
+    @pytest.mark.unit
+    @pytest.mark.asyncio
     async def test_tavily_search_missing_key(self):
         """测试 Tavily 搜索缺少 API Key"""
         from app.services.search.engines import TavilyEngine
