@@ -23,7 +23,11 @@ class ArxivCrawler(BaseCrawler):
         }
         
         try:
-            async with httpx.AsyncClient(timeout=self.timeout, headers=self.headers) as client:
+            async with httpx.AsyncClient(
+                timeout=self.timeout,
+                headers=self.headers,
+                follow_redirects=True,
+            ) as client:
                 response = await client.get(base_url, params=params)
                 response.raise_for_status()
                 
@@ -46,7 +50,7 @@ class ArxivCrawler(BaseCrawler):
                 return results
         except Exception as e:
             logger.error(f"爬取 arXiv 失败: {e}")
-            return results
+            return []
     
     async def _parse_entry(self, entry) -> Dict[str, Any]:
         """解析 arXiv 条目"""

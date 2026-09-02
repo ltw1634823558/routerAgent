@@ -31,6 +31,74 @@
               </el-select>
             </el-form-item>
 
+            <el-form-item label="提示词模板">
+              <div class="template-picker">
+                <el-select
+                  v-model="selectedTemplateId"
+                  clearable
+                  filterable
+                  placeholder="选择模板或直接输入"
+                  @change="selectTemplate"
+                >
+                  <el-option
+                    v-for="template in templates"
+                    :key="template.id"
+                    :label="`${template.name} · v${template.current_version}`"
+                    :value="template.id"
+                  />
+                </el-select>
+                <el-button @click="newTemplate">新建</el-button>
+              </div>
+            </el-form-item>
+
+            <div v-if="templateEditorVisible" class="template-editor">
+              <div class="template-editor-title">
+                <span>{{ selectedTemplateId ? '编辑模板' : '新建模板' }}</span>
+                <el-button text type="info" @click="templateEditorVisible = false">收起</el-button>
+              </div>
+              <el-input v-model="templateDraft.name" placeholder="模板名称" class="template-name" />
+              <el-input
+                v-model="templateDraft.content"
+                type="textarea"
+                :rows="7"
+                placeholder="模板内容，变量写成 {{variable}}"
+                @input="syncVariableValues"
+              />
+              <div v-if="templateVariables.length" class="template-variables">
+                <div class="variables-title">变量值</div>
+                <el-input
+                  v-for="name in templateVariables"
+                  :key="name"
+                  v-model="variableValues[name]"
+                  :placeholder="`填写 ${name}`"
+                  :label="name"
+                  class="variable-input"
+                >
+                  <template #prepend>{{ name }}</template>
+                </el-input>
+              </div>
+              <div class="template-actions">
+                <el-button type="primary" @click="saveTemplate" :loading="templateSaving">保存模板</el-button>
+                <el-button v-if="selectedTemplateId" @click="saveVersion">保存新版本</el-button>
+                <el-button @click="renderTemplatePreview">渲染预览</el-button>
+                <el-button type="success" @click="testTemplate" :loading="testing">一键测试</el-button>
+              </div>
+              <div v-if="selectedTemplateId && versions.length" class="version-tools">
+                <div class="version-row">
+                  <span>历史对比</span>
+                  <el-select v-model="fromVersion" placeholder="旧版本" size="small">
+                    <el-option v-for="version in versions" :key="`from-${version.version}`" :label="`v${version.version}`" :value="version.version" />
+                  </el-select>
+                  <span>→</span>
+                  <el-select v-model="toVersion" placeholder="新版本" size="small">
+                    <el-option v-for="version in versions" :key="`to-${version.version}`" :label="`v${version.version}`" :value="version.version" />
+                  </el-select>
+                  <el-button size="small" @click="compareVersions" :disabled="fromVersion === null || toVersion === null">查看差异</el-button>
+                </div>
+                <pre v-if="diffText" class="version-diff">{{ diffText }}</pre>
+              </div>
+            </div>
+
             <el-form-item label="需求描述">
               <el-input
                 v-model="form.userInput"
@@ -142,13 +210,24 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
-import { modelApi } from '@/api/request'
+import { modelApi, promptApi } from '@/api/request'
 import { marked } from 'marked'
 import { WebSocketClient } from '@/api/websocket'
 
 const loading = ref(false)
 const models = ref<any[]>([])
 const result = ref('')
+const templates = ref<any[]>([])
+const versions = ref<any[]>([])
+const selectedTemplateId = ref<number | null>(null)
+const templateEditorVisible = ref(false)
+const templateSaving = ref(false)
+const testing = ref(false)
+const fromVersion = ref<number | null>(null)
+const toVersion = ref<number | null>(null)
+const diffText = ref('')
+const variableValues = ref<Record<string, string>>({})
+const templateDraft = ref({ name: '', content: '', description: '', tags: [] as string[] })
 
 const form = ref({
   modelId: null as number | null,
@@ -182,6 +261,19 @@ const resultHtml = computed(() => {
   return result.value ? marked(result.value) as string : ''
 })
 
+const templateVariables = computed(() => {
+  const names: string[] = []
+  const pattern = /{{\s*([A-Za-z_][A-Za-z0-9_.-]*)\s*}}/g
+  for (const match of templateDraft.value.content.matchAll(pattern)) {
+    if (!names.includes(match[1])) names.push(match[1])
+  }
+  const selected = templates.value.find((item) => item.id === selectedTemplateId.value)
+  for (const name of selected?.variables || []) {
+    if (!names.includes(name)) names.push(name)
+  }
+  return names
+})
+
 const loadModels = async () => {
   try {
     models.value = await modelApi.getAll()
@@ -189,6 +281,146 @@ const loadModels = async () => {
     if (defaultModel) {
       form.value.modelId = defaultModel.id
     }
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  }
+}
+
+const loadTemplates = async () => {
+  try {
+    templates.value = await promptApi.getTemplates()
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  }
+}
+
+const selectTemplate = async (id: number | null) => {
+  diffText.value = ''
+  fromVersion.value = null
+  toVersion.value = null
+  if (!id) {
+    templateEditorVisible.value = false
+    return
+  }
+  try {
+    const template = await promptApi.getTemplate(id)
+    selectedTemplateId.value = template.id
+    templateDraft.value = {
+      name: template.name,
+      content: template.content,
+      description: template.description || '',
+      tags: template.tags || [],
+    }
+    variableValues.value = Object.fromEntries((template.variables || []).map((name: string) => [name, '']))
+    versions.value = await promptApi.getVersions(id)
+    fromVersion.value = versions.value.length ? versions.value[versions.value.length - 1].version : null
+    toVersion.value = versions.value[0]?.version ?? null
+    templateEditorVisible.value = true
+    if (!form.value.userInput) form.value.userInput = template.content
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  }
+}
+
+const newTemplate = () => {
+  selectedTemplateId.value = null
+  versions.value = []
+  diffText.value = ''
+  fromVersion.value = null
+  toVersion.value = null
+  variableValues.value = {}
+  templateDraft.value = { name: '', content: '', description: '', tags: [] }
+  templateEditorVisible.value = true
+}
+
+const syncVariableValues = () => {
+  const next = { ...variableValues.value }
+  for (const name of templateVariables.value) {
+    if (!(name in next)) next[name] = ''
+  }
+  variableValues.value = next
+}
+
+const saveTemplate = async () => {
+  if (!templateDraft.value.name.trim() || !templateDraft.value.content.trim()) {
+    ElMessage.warning('请填写模板名称和内容')
+    return
+  }
+  templateSaving.value = true
+  try {
+    const payload = {
+      ...templateDraft.value,
+      name: templateDraft.value.name.trim(),
+      variables: templateVariables.value,
+    }
+    const saved = selectedTemplateId.value
+      ? await promptApi.updateTemplate(selectedTemplateId.value, payload)
+      : await promptApi.createTemplate(payload)
+    await loadTemplates()
+    await selectTemplate(saved.id)
+    ElMessage.success('模板已保存')
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  } finally {
+    templateSaving.value = false
+  }
+}
+
+const saveVersion = async () => {
+  if (!selectedTemplateId.value || !templateDraft.value.content.trim()) return
+  try {
+    await promptApi.createVersion(selectedTemplateId.value, {
+      content: templateDraft.value.content,
+      variables: templateVariables.value,
+      change_note: '从编辑器保存',
+    })
+    await selectTemplate(selectedTemplateId.value)
+    ElMessage.success('新版本已保存')
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  }
+}
+
+const renderTemplatePreview = async () => {
+  try {
+    const preview = await promptApi.render({
+      content: templateDraft.value.content,
+      values: variableValues.value,
+      strict: false,
+    })
+    result.value = preview.rendered
+    if (preview.missing?.length) ElMessage.warning(`尚未填写: ${preview.missing.join('、')}`)
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  }
+}
+
+const testTemplate = async () => {
+  if (!form.value.modelId) {
+    ElMessage.warning('请选择模型')
+    return
+  }
+  testing.value = true
+  try {
+    const tested = await promptApi.test({
+      prompt: templateDraft.value.content,
+      variables: variableValues.value,
+      model_config_id: form.value.modelId,
+    })
+    result.value = tested.output
+    ElMessage.success('测试完成')
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  } finally {
+    testing.value = false
+  }
+}
+
+const compareVersions = async () => {
+  if (!selectedTemplateId.value || fromVersion.value === null || toVersion.value === null) return
+  try {
+    const compared = await promptApi.compareVersions(selectedTemplateId.value, fromVersion.value, toVersion.value)
+    diffText.value = compared.diff || '两个版本没有差异'
   } catch (e: any) {
     ElMessage.error(e.message)
   }
@@ -217,7 +449,7 @@ const generate = async () => {
         loading.value = false
       }
     },
-    (error) => {
+    () => {
       ElMessage.error('WebSocket 连接失败')
       loading.value = false
     }
@@ -228,6 +460,11 @@ const generate = async () => {
     ws.value.send({
       user_input: form.value.userInput,
       model_id: form.value.modelId,
+      ...(selectedTemplateId.value ? {
+        template_id: selectedTemplateId.value,
+        variables: variableValues.value,
+        template_version: toVersion.value || undefined,
+      } : {}),
     })
   } catch (error) {
     ElMessage.error('连接失败')
@@ -255,7 +492,10 @@ const exportResult = () => {
   ElMessage.success('导出成功')
 }
 
-onMounted(loadModels)
+onMounted(() => {
+  loadModels()
+  loadTemplates()
+})
 </script>
 
 <style scoped>
@@ -361,6 +601,95 @@ onMounted(loadModels)
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.template-picker {
+  display: flex;
+  gap: 8px;
+  width: 100%;
+}
+
+.template-picker .el-select {
+  flex: 1;
+}
+
+.template-editor {
+  margin: -6px 0 20px 90px;
+  padding: 12px;
+  border: 1px solid #e5e7eb;
+  border-radius: 10px;
+  background: #fafafa;
+}
+
+.template-editor-title,
+.version-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.template-editor-title {
+  justify-content: space-between;
+  margin-bottom: 8px;
+  color: #374151;
+  font-size: 13px;
+  font-weight: 600;
+}
+
+.template-name {
+  margin-bottom: 8px;
+}
+
+.template-variables {
+  margin-top: 10px;
+}
+
+.variables-title {
+  margin-bottom: 6px;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.variable-input {
+  margin-bottom: 6px;
+}
+
+.template-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin-top: 10px;
+}
+
+.template-actions .el-button {
+  margin-left: 0;
+}
+
+.version-tools {
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid #e5e7eb;
+}
+
+.version-row > span:first-child {
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.version-row .el-select {
+  width: 86px;
+}
+
+.version-diff {
+  max-height: 180px;
+  margin: 8px 0 0;
+  padding: 8px;
+  overflow: auto;
+  background: #111827;
+  color: #e5e7eb;
+  font-size: 11px;
+  line-height: 1.5;
+  white-space: pre-wrap;
 }
 
 .model-dot {

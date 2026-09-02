@@ -11,6 +11,8 @@ from app.models.model_config import (
     QuestionTypeEnum,
     DifficultyEnum,
 )
+from app.models.knowledge import KnowledgeChunk, KnowledgeImportJob
+from app.models.prompt import PromptTemplate, PromptVersion
 
 __all__ = [
     "ModelConfig",
@@ -24,4 +26,8 @@ __all__ = [
     "SourceTypeEnum",
     "QuestionTypeEnum",
     "DifficultyEnum",
+    "KnowledgeChunk",
+    "KnowledgeImportJob",
+    "PromptTemplate",
+    "PromptVersion",
 ]

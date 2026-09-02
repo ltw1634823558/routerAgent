@@ -17,6 +17,9 @@ class LLMService:
 
     def __init__(self, config: Dict[str, Any]):
         self.config = config
+        # fallback 配置由模型中心在请求入口组装；直接使用 LLMService 时仍只调用当前模型。
+        self.fallback_used = False
+        self.last_error: Optional[str] = None
         self.api_key_env = str(config.get("api_key_env") or "").strip()
         self.api_key_config_error: Optional[str] = None
         if not API_KEY_ENV_NAME_PATTERN.fullmatch(self.api_key_env):
@@ -34,22 +37,55 @@ class LLMService:
         stream: bool = True,
         **kwargs,
     ) -> AsyncGenerator[str, None]:
-        """调用聊天接口"""
+        """调用聊天接口，主模型失败且尚未输出内容时自动切换备用模型。"""
+        self.fallback_used = False
+        self.last_error = None
+        configured_fallbacks = self.config.get("fallbacks") or []
+        if not isinstance(configured_fallbacks, (list, tuple)):
+            configured_fallbacks = []
+        candidates = [self.config]
+        seen_ids = {self.config.get("id")} if isinstance(self.config, dict) else set()
+        for candidate in configured_fallbacks:
+            if not isinstance(candidate, dict):
+                continue
+            candidate_id = candidate.get("id")
+            if candidate_id is not None and candidate_id in seen_ids:
+                continue
+            candidates.append(candidate)
+            if candidate_id is not None:
+                seen_ids.add(candidate_id)
+        errors = []
+        for index, candidate in enumerate(candidates):
+            service = self if index == 0 else LLMService(candidate)
+            emitted = False
+            try:
+                async for chunk in service._chat_once(messages, stream, **kwargs):
+                    emitted = True
+                    yield chunk
+                if index:
+                    self.fallback_used = True
+                self.last_error = None
+                return
+            except Exception as exc:
+                self.last_error = str(exc)
+                errors.append(f"{candidate.get('name') or candidate.get('model_name')}: {exc}")
+                # 流式响应已开始后不能切换，否则会把两次结果拼接成错误答案。
+                if emitted or index == len(candidates) - 1:
+                    if len(candidates) == 1:
+                        raise
+                    raise RuntimeError("；".join(errors)) from exc
+                logger.warning(f"模型调用失败，切换备用模型: {errors[-1]}")
+
+    async def _chat_once(self, messages: list, stream: bool, **kwargs) -> AsyncGenerator[str, None]:
+        """执行单个模型请求，不包含故障切换。"""
         self._validate_api_key()
         if self.provider == "zhipu":
             async for chunk in self._chat_zhipu(messages, stream, **kwargs):
-                yield chunk
-        elif self.provider == "deepseek":
-            async for chunk in self._chat_openai_compatible(messages, stream, **kwargs):
-                yield chunk
-        elif self.provider == "moonshot":
-            async for chunk in self._chat_openai_compatible(messages, stream, **kwargs):
                 yield chunk
         elif self.provider == "alibaba":
             async for chunk in self._chat_dashscope(messages, stream, **kwargs):
                 yield chunk
         else:
-            # 默认 OpenAI 兼容格式
             async for chunk in self._chat_openai_compatible(messages, stream, **kwargs):
                 yield chunk
 

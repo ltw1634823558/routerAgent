@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 from app.agents.base import BaseAgent
 from app.agents.search import SearchAgent
 from app.agents.prompt import PromptAgent
-from app.agents.quiz import QuizAgent
+from app.agents.quiz import QuizAgent, normalize_question
 
 
 class TestBaseAgent:
@@ -117,6 +117,72 @@ class TestSearchAgent:
             results.append(chunk)
 
         assert "搜索失败" in "".join(results) or "网络错误" in "".join(results)
+
+    @pytest.mark.unit
+    @pytest.mark.agent
+    def test_search_agent_build_subqueries_keeps_original_and_is_bounded(self):
+        queries = SearchAgent.build_subqueries("Python 异步编程", max_subqueries=3)
+        assert queries[0] == "Python 异步编程"
+        assert len(queries) == 3
+        assert len(set(queries)) == 3
+
+    @pytest.mark.unit
+    @pytest.mark.agent
+    def test_search_agent_prepare_sources_deduplicates_tracking_urls(self):
+        sources = SearchAgent._prepare_sources([
+            {
+                "title": "文档",
+                "url": "https://docs.example.com/a?utm_source=x",
+                "snippet": "短摘要",
+            },
+            {
+                "title": "文档（完整）",
+                "url": "https://docs.example.com/a/",
+                "snippet": "这是更长的摘要内容",
+            },
+            {
+                "title": "官方文档",
+                "url": "https://python.org/guide",
+                "snippet": "内容",
+            },
+        ])
+        assert len(sources) == 2
+        assert sources[0]["citation_id"] == "S1"
+        assert sources[0]["url"] == "https://python.org/guide"
+        assert sources[1]["snippet"] == "这是更长的摘要内容"
+
+    @pytest.mark.unit
+    @pytest.mark.agent
+    @pytest.mark.asyncio
+    async def test_search_agent_deep_search_parallel_and_citations(self, search_agent):
+        calls = []
+
+        async def mock_search(query, max_results=10):
+            calls.append(query)
+            return {
+                "success": True,
+                "results": [{
+                    "title": f"结果 {query}",
+                    "url": "https://example.com/shared" if query != calls[0] else "https://example.com/one",
+                    "snippet": f"关于 {query} 的内容",
+                }],
+            }
+
+        async def mock_stream(prompt):
+            assert "[S1]" in prompt
+            assert "深度检索" in prompt
+            yield "综合答案 [S1]"
+
+        search_agent.engine.search = mock_search
+        with patch.object(search_agent, "stream_response", mock_stream):
+            chunks = []
+            async for chunk in search_agent.run("测试主题", deep_search=True, max_subqueries=3):
+                chunks.append(chunk)
+
+        assert len(calls) == 3
+        assert "综合答案 [S1]" in "".join(chunks)
+        assert "深度检索来源" in "".join(chunks)
+        assert len(search_agent.last_sources) == 2
 
 
 class TestPromptAgent:
@@ -322,3 +388,23 @@ class TestQuizAgent:
             async for chunk in quiz_agent.run("Python", "basic", 1, knowledge_context):
                 results.append(chunk)
             assert len(results) > 0
+
+
+def test_quiz_normalize_python_class_code_answer():
+    question = normalize_question({
+        "question": "请编写一个 Python 类",
+        "type": "python_class",
+        "code_answer": "```python\nclass User:\n    pass\n```",
+    })
+    assert question["question_type"] == "code"
+    assert question["answer"] == "class User:\n    pass"
+
+
+def test_quiz_parse_legacy_code_fields():
+    questions = QuizAgent({}).parse_questions(
+        '{"questions":[{"text":"实现函数","question_type":"coding",'
+        '"reference_code":"```python\\ndef f():\\n    return 1\\n```"}]}'
+    )
+    assert questions[0]["question"] == "实现函数"
+    assert questions[0]["question_type"] == "code"
+    assert questions[0]["answer"] == "def f():\n    return 1"

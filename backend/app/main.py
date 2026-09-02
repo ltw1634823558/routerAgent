@@ -41,6 +41,8 @@ app.add_middleware(
 
 # 注册 REST API 路由
 app.include_router(model.router, prefix="/api/models", tags=["模型配置"])
+# Keep the singular prefix used by the first public API release.
+app.include_router(model.router, prefix="/api/model", tags=["模型配置（兼容）"], include_in_schema=False)
 app.include_router(search.router, prefix="/api/search", tags=["搜索Agent"])
 app.include_router(prompt.router, prefix="/api/prompt", tags=["提示词Agent"])
 app.include_router(quiz.router, prefix="/api/quiz", tags=["问答Agent"])

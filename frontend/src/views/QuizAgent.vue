@@ -132,6 +132,51 @@
           </el-table-column>
         </el-table>
       </el-card>
+
+      <!-- 错题本与薄弱点 -->
+      <el-card class="insights-card">
+        <template #header>
+          <div class="card-header insights-header">
+            <div class="header-info">
+              <h3>错题本与薄弱点</h3>
+              <p>根据历史作答记录安排复习</p>
+            </div>
+            <el-button size="small" :loading="loadingInsights" @click="loadLearningInsights">
+              <el-icon><RefreshRight /></el-icon>
+              刷新
+            </el-button>
+          </div>
+        </template>
+        <el-row :gutter="24">
+          <el-col :span="14">
+            <div class="insight-title">最近错题</div>
+            <el-table v-if="wrongAnswers.length" :data="wrongAnswers.slice(0, 8)" stripe size="small">
+              <el-table-column prop="question" label="题目" min-width="220" show-overflow-tooltip />
+              <el-table-column prop="category" label="分类" width="110">
+                <template #default="{ row }">{{ row.category || '未分类' }}</template>
+              </el-table-column>
+              <el-table-column label="来源" min-width="150" show-overflow-tooltip>
+                <template #default="{ row }">
+                  <span>{{ row.source_title || row.source || 'AI 生成' }}</span>
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-else description="暂无错题记录" :image-size="60" />
+          </el-col>
+          <el-col :span="10">
+            <div class="insight-title">分类薄弱点</div>
+            <el-table v-if="weaknessStats.categories?.length" :data="weaknessStats.categories.slice(0, 6)" stripe size="small">
+              <el-table-column prop="name" label="分类" min-width="100" />
+              <el-table-column label="正确率" width="100" align="right">
+                <template #default="{ row }">
+                  <el-progress :percentage="row.accuracy" :status="row.accuracy < 60 ? 'exception' : row.accuracy < 80 ? 'warning' : 'success'" :stroke-width="8" />
+                </template>
+              </el-table-column>
+            </el-table>
+            <el-empty v-else description="完成答题后生成薄弱点" :image-size="60" />
+          </el-col>
+        </el-row>
+      </el-card>
     </div>
 
     <!-- 答题区域 -->
@@ -165,12 +210,12 @@
               v-for="(option, idx) in currentQuestion.options"
               :key="idx"
               class="choice-item"
-              :class="{ selected: isOptionSelected(idx) }"
-              @click="toggleOption(idx)"
+              :class="{ selected: isOptionSelected(Number(idx)) }"
+              @click="toggleOption(Number(idx))"
             >
               <span class="choice-letter" :class="{ checkbox: isMultipleChoice(currentQuestion) }">
-                <el-icon v-if="isMultipleChoice(currentQuestion) && isOptionSelected(idx)"><Check /></el-icon>
-                <span v-else>{{ String.fromCharCode(65 + idx) }}</span>
+                <el-icon v-if="isMultipleChoice(currentQuestion) && isOptionSelected(Number(idx))"><Check /></el-icon>
+                <span v-else>{{ String.fromCharCode(65 + Number(idx)) }}</span>
               </span>
               <span class="choice-text">{{ option }}</span>
             </div>
@@ -186,7 +231,7 @@
 
           <!-- 代码题 -->
           <el-input
-            v-if="currentQuestion.question_type === 'code'"
+            v-if="isCodeQuestion(currentQuestion)"
             v-model="userAnswer"
             type="textarea"
             :rows="12"
@@ -206,7 +251,7 @@
           </el-button>
           <div class="question-dots">
             <span
-              v-for="(q, idx) in questions"
+              v-for="(_, idx) in questions"
               :key="idx"
               class="dot"
               :class="{
@@ -311,6 +356,10 @@
               <el-icon><InfoFilled /></el-icon>
               {{ r.explanation }}
             </p>
+            <p class="result-source" v-if="r.source_title || r.source">
+              来源：{{ r.source_title || r.source }}
+              <a v-if="r.source" :href="r.source" target="_blank" rel="noopener noreferrer">查看原文</a>
+            </p>
           </div>
         </div>
 
@@ -348,8 +397,9 @@ hljs.registerLanguage('json', json)
 hljs.registerLanguage('bash', bash)
 
 // 判断是否为代码类型答案
-const isCodeAnswer = (questionType: string, answer: string): boolean => {
-  if (questionType === 'code') return true
+const isCodeAnswer = (questionType: string, answer: unknown): boolean => {
+  const normalizedType = String(questionType || '').toLowerCase().replace('-', '_')
+  if (normalizedType === 'code' || normalizedType.includes('python') || normalizedType.includes('coding')) return true
   // 检测答案是否包含多行或代码特征
   if (answer && typeof answer === 'string') {
     const codeIndicators = ['\n', 'def ', 'function ', 'class ', 'import ', 'const ', 'let ', 'var ', 'SELECT ', 'return ', '    ', '\t']
@@ -362,7 +412,7 @@ const isCodeAnswer = (questionType: string, answer: string): boolean => {
 const detectLanguage = (code: string): string => {
   if (!code) return ''
   const patterns: Record<string, RegExp> = {
-    python: /def\s+\w+\s*\(|import\s+\w+|from\s+\w+\s+import|print\s*\(/,
+    python: /(?:^|\n)\s*(?:class|def)\s+\w+\s*[(:]|import\s+\w+|from\s+\w+\s+import|print\s*\(/,
     javascript: /function\s+\w+\s*\(|const\s+\w+\s*=|let\s+\w+\s*=|=>\s*\{|console\./,
     typescript: /:\s*(string|number|boolean|any)\b|interface\s+\w+|<\w+>/,
     sql: /SELECT\s+.+FROM|INSERT\s+INTO|UPDATE\s+.+SET|CREATE\s+TABLE/i,
@@ -376,17 +426,20 @@ const detectLanguage = (code: string): string => {
 }
 
 // 代码高亮处理
-const highlightCode = (code: string, questionType: string): string => {
+const highlightCode = (code: string, _questionType: string): string => {
   if (!code) return ''
-  const language = detectLanguage(code)
+  const source = (typeof code === 'string' ? code : String(code))
+    .replace(/^\s*```(?:[\w+#.-]+)?\s*\n?/i, '')
+    .replace(/\n?\s*```\s*$/i, '')
+  const language = detectLanguage(source)
   try {
     if (language && hljs.getLanguage(language)) {
-      return hljs.highlight(code, { language }).value
+      return hljs.highlight(source, { language }).value
     }
     // 自动检测语言
-    return hljs.highlightAuto(code).value
+    return hljs.highlightAuto(source).value
   } catch {
-    return code
+    return source.replace(/[&<>"']/g, char => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char] || char))
   }
 }
 
@@ -404,6 +457,9 @@ const score = ref(0)
 const correctCount = ref(0)
 const results = ref<any[]>([])
 const sessionId = ref<number | null>(null)
+const wrongAnswers = ref<any[]>([])
+const weaknessStats = ref<any>({ categories: [], difficulties: [] })
+const loadingInsights = ref(false)
 
 const ws = ref<WebSocketClient | null>(null)
 
@@ -426,6 +482,10 @@ const currentQuestion = computed(() => {
 
 const isMultipleChoice = (question: any) => ['multiple_choice', 'multi_choice', 'multiple'].includes(question?.question_type)
 const isChoiceQuestion = (question: any) => question?.question_type === 'choice' || isMultipleChoice(question)
+const isCodeQuestion = (question: any) => {
+  const type = String(question?.question_type || question?.type || '').toLowerCase().replace(/[-\s]+/g, '_')
+  return type === 'code' || type === 'coding' || type === 'programming' || type.includes('python')
+}
 const isOptionSelected = (idx: number) => isMultipleChoice(currentQuestion.value)
   ? Array.isArray(userAnswer.value) && userAnswer.value.includes(idx)
   : userAnswer.value === idx
@@ -520,6 +580,22 @@ const loadHistory = async () => {
   }
 }
 
+const loadLearningInsights = async () => {
+  loadingInsights.value = true
+  try {
+    const [wrong, stats] = await Promise.all([
+      quizApi.getWrongAnswers({ limit: 20 }),
+      quizApi.getWeaknessStats(),
+    ])
+    wrongAnswers.value = wrong || []
+    weaknessStats.value = stats || { categories: [], difficulties: [] }
+  } catch (e) {
+    console.error(e)
+  } finally {
+    loadingInsights.value = false
+  }
+}
+
 const startQuiz = async () => {
   if (!form.modelId) {
     ElMessage.warning('请选择模型')
@@ -552,7 +628,7 @@ const startQuiz = async () => {
         showResult.value = true
       }
     },
-    (error) => {
+    () => {
       ElMessage.error('WebSocket 连接失败')
       generating.value = false
     }
@@ -628,12 +704,14 @@ const resetQuiz = () => {
   results.value = []
   sessionId.value = null
   loadHistory()
+  loadLearningInsights()
 }
 
 onMounted(() => {
   loadModels()
   loadCategories()
   loadHistory()
+  loadLearningInsights()
 })
 </script>
 
@@ -647,6 +725,7 @@ onMounted(() => {
 /* 卡片通用样式 */
 .config-card,
 .history-card,
+.insights-card,
 .quiz-card,
 .result-card {
   border-radius: 16px;
@@ -657,6 +736,7 @@ onMounted(() => {
 
 .config-card :deep(.el-card__header),
 .history-card :deep(.el-card__header),
+.insights-card :deep(.el-card__header),
 .result-card :deep(.el-card__header) {
   padding: 16px 20px;
   border-bottom: 1px solid #f3f4f6;
@@ -914,6 +994,21 @@ onMounted(() => {
   color: #fff;
 }
 
+.insights-header {
+  justify-content: space-between;
+}
+
+.insight-title {
+  color: #374151;
+  font-size: 14px;
+  font-weight: 600;
+  margin-bottom: 10px;
+}
+
+.insights-card :deep(.el-progress) {
+  min-width: 92px;
+}
+
 .choice-letter.checkbox {
   border-radius: 7px;
   font-size: 16px;
@@ -1142,6 +1237,20 @@ onMounted(() => {
   padding: 12px;
   background: rgba(0, 0, 0, 0.03);
   border-radius: 8px;
+}
+
+.result-source {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 10px 0 0;
+  color: #6b7280;
+  font-size: 12px;
+}
+
+.result-source a {
+  color: #2563eb;
+  text-decoration: none;
 }
 
 .result-actions {

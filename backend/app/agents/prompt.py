@@ -3,6 +3,7 @@
 """
 from typing import AsyncGenerator, Dict, Any
 from app.agents.base import BaseAgent
+from app.services.prompt import render_prompt_template
 
 
 class PromptAgent(BaseAgent):
@@ -19,8 +20,16 @@ class PromptAgent(BaseAgent):
 
 请生成提示词: """
 
-    async def run(self, user_input: str) -> AsyncGenerator[str, None]:
+    async def run(
+        self,
+        user_input: str,
+        *,
+        template: str | None = None,
+        variables: Dict[str, Any] | None = None,
+    ) -> AsyncGenerator[str, None]:
         """运行提示词优化 Agent"""
+        if template is not None:
+            user_input, _ = render_prompt_template(template, variables, strict=True)
         prompt = f"""{self.SYSTEM_PROMPT}
 
 用户描述: {user_input}

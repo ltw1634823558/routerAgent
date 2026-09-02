@@ -13,6 +13,10 @@ CREATE TABLE IF NOT EXISTS model_configs (
     api_url VARCHAR(500) COMMENT 'API 地址',
     api_key_env VARCHAR(100) NOT NULL COMMENT 'API KEY 环境变量名',
     is_default BOOLEAN DEFAULT FALSE COMMENT '是否默认',
+    capabilities JSON COMMENT '模型能力标签',
+    priority INT NOT NULL DEFAULT 100 COMMENT '故障切换优先级，数值越小越优先',
+    enabled BOOLEAN NOT NULL DEFAULT TRUE COMMENT '是否启用',
+    fallback_model_ids JSON COMMENT '备用模型 ID 列表',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='模型配置表';
@@ -39,18 +43,70 @@ CREATE TABLE IF NOT EXISTS prompt_records (
     FOREIGN KEY (model_config_id) REFERENCES model_configs(id) ON DELETE SET NULL
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='提示词记录表';
 
+-- Prompt IDE 模板与版本表
+CREATE TABLE IF NOT EXISTS prompt_templates (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    name VARCHAR(200) NOT NULL COMMENT '模板名称',
+    description TEXT COMMENT '模板说明',
+    content LONGTEXT NOT NULL COMMENT '模板正文，使用 {{variable}} 占位符',
+    variables JSON NOT NULL COMMENT '变量名列表',
+    tags JSON NOT NULL COMMENT '标签列表',
+    current_version INT NOT NULL DEFAULT 1 COMMENT '当前版本号',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='提示词模板';
+
+CREATE TABLE IF NOT EXISTS prompt_versions (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    template_id INT NOT NULL COMMENT '模板 ID',
+    version INT NOT NULL COMMENT '版本号',
+    content LONGTEXT NOT NULL COMMENT '版本正文',
+    variables JSON NOT NULL COMMENT '变量名列表',
+    change_note VARCHAR(500) COMMENT '变更说明',
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    UNIQUE KEY uq_prompt_version_template_version (template_id, version),
+    FOREIGN KEY (template_id) REFERENCES prompt_templates(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='提示词模板版本';
+
 -- 知识库表
 CREATE TABLE IF NOT EXISTS knowledge_base (
     id INT AUTO_INCREMENT PRIMARY KEY,
     title VARCHAR(200) NOT NULL COMMENT '标题',
     content LONGTEXT NOT NULL COMMENT '内容',
     source VARCHAR(500) COMMENT '来源 URL',
-    source_type ENUM('official', 'csdn', 'arxiv', 'github', 'manual') COMMENT '来源类型',
+    source_type ENUM('official', 'csdn', 'arxiv', 'github', 'url', 'manual') COMMENT '来源类型',
     category VARCHAR(100) COMMENT '技能分类',
     tags JSON COMMENT '标签列表',
     crawled_at TIMESTAMP COMMENT '爬取时间',
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库表';
+
+CREATE TABLE IF NOT EXISTS knowledge_chunks (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    knowledge_id INT NOT NULL,
+    chunk_index INT NOT NULL,
+    content TEXT NOT NULL,
+    source VARCHAR(500),
+    metadata_json JSON,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    INDEX idx_knowledge_chunks_knowledge_id (knowledge_id),
+    FOREIGN KEY (knowledge_id) REFERENCES knowledge_base(id) ON DELETE CASCADE
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库文本切片';
+
+CREATE TABLE IF NOT EXISTS knowledge_import_jobs (
+    id INT AUTO_INCREMENT PRIMARY KEY,
+    status VARCHAR(20) NOT NULL DEFAULT 'pending',
+    source_type VARCHAR(30) NOT NULL DEFAULT 'url',
+    target VARCHAR(1000),
+    options JSON,
+    total_items INT NOT NULL DEFAULT 0,
+    imported_items INT NOT NULL DEFAULT 0,
+    error TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    started_at TIMESTAMP NULL,
+    finished_at TIMESTAMP NULL,
+    INDEX idx_knowledge_import_jobs_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='知识库导入任务';
 
 -- 试题表
 CREATE TABLE IF NOT EXISTS quiz_questions (
@@ -74,7 +130,7 @@ CREATE TABLE IF NOT EXISTS quiz_sessions (
     difficulty ENUM('basic', 'intermediate', 'advanced') COMMENT '难度',
     total_questions INT NOT NULL COMMENT '总题数',
     correct_count INT DEFAULT 0 COMMENT '正确数',
-    score DECIMAL(5,2) COMMENT '得分',
+    score DECIMAL(5,2) DEFAULT 0 COMMENT '得分',
     started_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     finished_at TIMESTAMP COMMENT '完成时间'
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COMMENT='答题会话表';

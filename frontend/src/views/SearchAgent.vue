@@ -71,6 +71,20 @@
               />
             </el-form-item>
 
+            <el-form-item label="搜索模式">
+              <el-switch
+                v-model="form.deepSearch"
+                active-text="深度研究"
+                inactive-text="快速搜索"
+              />
+              <el-tooltip
+                content="深度研究会从多个角度检索、去重并要求答案标注来源"
+                placement="top"
+              >
+                <el-icon class="mode-help"><QuestionFilled /></el-icon>
+              </el-tooltip>
+            </el-form-item>
+
             <el-form-item>
               <el-button
                 type="primary"
@@ -165,6 +179,7 @@
 <script setup lang="ts">
 import { ref, onMounted, computed } from 'vue'
 import { ElMessage } from 'element-plus'
+import { QuestionFilled } from '@element-plus/icons-vue'
 import { modelApi, searchApi } from '@/api/request'
 import { marked } from 'marked'
 import { WebSocketClient } from '@/api/websocket'
@@ -180,6 +195,7 @@ const form = ref({
   apiKey: '',
   modelId: null as number | null,
   query: '',
+  deepSearch: false,
 })
 
 const engines = [
@@ -277,7 +293,7 @@ const doSearch = async () => {
         loading.value = false
       }
     },
-    (error) => {
+    () => {
       ElMessage.error('WebSocket 连接失败')
       loading.value = false
     }
@@ -290,6 +306,8 @@ const doSearch = async () => {
       engine: form.value.engine,
       api_key: form.value.apiKey,
       model_id: form.value.modelId,
+      deep_search: form.value.deepSearch,
+      max_subqueries: form.value.deepSearch ? 3 : 1,
     })
   } catch (error) {
     ElMessage.error('连接失败')
@@ -493,6 +511,12 @@ onMounted(() => {
   display: flex;
   align-items: center;
   gap: 8px;
+}
+
+.mode-help {
+  margin-left: 8px;
+  color: #9ca3af;
+  cursor: help;
 }
 
 .model-dot {

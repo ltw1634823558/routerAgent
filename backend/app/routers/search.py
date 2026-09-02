@@ -37,12 +37,11 @@ async def delete_search_record(record_id: int, db: AsyncSession = Depends(get_db
 @router.get("/engines/list")
 async def get_engines():
     """获取支持的搜索引擎列表"""
-    return {
-        "engines": [
+    return [
+            {"value": "bocha", "label": "Bocha（波查）", "need_key": True},
             {"value": "duckduckgo", "label": "DuckDuckGo（免费）", "need_key": False},
             {"value": "tavily", "label": "Tavily", "need_key": True},
             {"value": "serpapi", "label": "SerpAPI (Google)", "need_key": True},
             {"value": "google", "label": "Google", "need_key": True},
             {"value": "bing", "label": "Bing", "need_key": True},
-        ]
-    }
+    ]

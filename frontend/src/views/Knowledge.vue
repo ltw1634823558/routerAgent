@@ -82,7 +82,7 @@
               <el-icon><Upload /></el-icon>
               手动导入
             </el-button>
-            <el-button class="crawl-btn" @click="triggerCrawl">
+            <el-button class="crawl-btn" @click="showCrawl = true">
               <el-icon><Refresh /></el-icon>
               自动爬取
             </el-button>
@@ -119,6 +119,12 @@
                 GitHub
               </div>
             </el-option>
+            <el-option label="网页 URL" value="url">
+              <div class="filter-option">
+                <span class="source-dot url"></span>
+                网页 URL
+              </div>
+            </el-option>
             <el-option label="手动导入" value="manual">
               <div class="filter-option">
                 <span class="source-dot manual"></span>
@@ -145,12 +151,14 @@
             v-model="searchKeyword"
             placeholder="搜索知识标题..."
             clearable
+            @keyup.enter="runKnowledgeSearch"
             class="search-input"
           >
             <template #prefix>
               <el-icon><Search /></el-icon>
             </template>
           </el-input>
+          <el-button type="primary" :loading="searching" @click="runKnowledgeSearch">检索</el-button>
         </div>
       </div>
 
@@ -211,6 +219,17 @@
           </template>
         </el-table-column>
       </el-table>
+      <div v-if="searchResults.length" class="search-results">
+        <div class="search-results-title">检索命中（{{ searchResults.length }}）</div>
+        <el-card v-for="item in searchResults" :key="`${item.knowledge_id}-${item.chunk_id}`" shadow="never" class="search-result">
+          <div class="search-result-header">
+            <strong>{{ item.title }}</strong>
+            <el-tag size="small">{{ Number(item.score || 0).toFixed(2) }}</el-tag>
+          </div>
+          <p>{{ item.content }}</p>
+          <a v-if="item.source" :href="item.source" target="_blank" rel="noopener">来源：{{ item.source }}</a>
+        </el-card>
+      </div>
     </el-card>
 
     <!-- 导入弹窗 -->
@@ -334,22 +353,70 @@
         </div>
       </div>
     </el-dialog>
+
+    <el-dialog v-model="showCrawl" title="自动导入" width="520px" :close-on-click-modal="false">
+      <el-form :model="crawlForm" label-width="90px">
+        <el-form-item label="来源类型">
+          <el-select v-model="crawlForm.source_type" style="width: 100%">
+            <el-option label="网页 URL" value="url" />
+            <el-option label="官方文档" value="official" />
+            <el-option label="GitHub" value="github" />
+            <el-option label="CSDN" value="csdn" />
+            <el-option label="arXiv" value="arxiv" />
+          </el-select>
+        </el-form-item>
+        <el-form-item label="目标">
+          <el-input v-model="crawlForm.target" :placeholder="crawlForm.source_type === 'github' ? 'owner/repository' : '关键词或 URL'" />
+        </el-form-item>
+        <el-form-item label="分类">
+          <el-input v-model="crawlForm.category" placeholder="可选" />
+        </el-form-item>
+        <el-form-item v-if="crawlTask" label="任务状态">
+          <el-progress :percentage="crawlProgress" :status="crawlTask.status === 'failed' ? 'exception' : undefined" />
+          <span class="task-status">{{ crawlTask.status }}，已导入 {{ crawlTask.imported_items }}/{{ crawlTask.total_items || '?' }}</span>
+          <p v-if="crawlTask.error" class="task-error">{{ crawlTask.error }}</p>
+        </el-form-item>
+      </el-form>
+      <template #footer>
+        <el-button @click="showCrawl = false">取消</el-button>
+        <el-button type="primary" :loading="crawling" :disabled="!crawlForm.target" @click="submitCrawl">开始导入</el-button>
+      </template>
+    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { ref, onMounted, computed, reactive } from 'vue'
+import { ref, onMounted, onUnmounted, computed, reactive } from 'vue'
 import { ElMessage, ElMessageBox } from 'element-plus'
 import { knowledgeApi } from '@/api/request'
 
 const loading = ref(false)
 const importing = ref(false)
+const searching = ref(false)
+const crawling = ref(false)
 const showImport = ref(false)
+const showCrawl = ref(false)
 const showDetail = ref(false)
 const knowledge = ref<any[]>([])
 const stats = ref<any>({})
 const detailData = ref<any>({})
 const searchKeyword = ref('')
+const searchResults = ref<any[]>([])
+const crawlTask = ref<any>(null)
+let taskTimer: ReturnType<typeof setInterval> | undefined
+
+const crawlForm = reactive({
+  source_type: 'url',
+  target: '',
+  category: '',
+  tags: [] as string[],
+  max_items: 10,
+})
+
+const crawlProgress = computed(() => {
+  if (!crawlTask.value || !crawlTask.value.total_items) return crawlTask.value?.status === 'completed' ? 100 : 0
+  return Math.min(100, Math.round((crawlTask.value.imported_items / crawlTask.value.total_items) * 100))
+})
 
 const filter = ref({
   sourceType: '',
@@ -378,6 +445,7 @@ const sourceLabels: Record<string, string> = {
   csdn: 'CSDN',
   arxiv: 'arXiv',
   github: 'GitHub',
+  url: '网页 URL',
   manual: '手动导入',
 }
 
@@ -460,6 +528,22 @@ const loadKnowledge = async () => {
   }
 }
 
+const runKnowledgeSearch = async () => {
+  const query = searchKeyword.value.trim()
+  if (!query) {
+    searchResults.value = []
+    return
+  }
+  searching.value = true
+  try {
+    searchResults.value = await knowledgeApi.search(query)
+  } catch (e: any) {
+    ElMessage.error(e.message)
+  } finally {
+    searching.value = false
+  }
+}
+
 const viewDetail = (row: any) => {
   detailData.value = row
   showDetail.value = true
@@ -503,8 +587,35 @@ const doImport = async () => {
   }
 }
 
-const triggerCrawl = () => {
-  ElMessage.info('爬虫功能开发中...')
+const pollCrawlTask = (id: number) => {
+  if (taskTimer) clearInterval(taskTimer)
+  taskTimer = setInterval(async () => {
+    try {
+      crawlTask.value = await knowledgeApi.getImportTask(id)
+      if (['completed', 'failed'].includes(crawlTask.value.status)) {
+        if (taskTimer) clearInterval(taskTimer)
+        taskTimer = undefined
+        crawling.value = false
+        if (crawlTask.value.status === 'completed') {
+          ElMessage.success(`导入完成，共导入 ${crawlTask.value.imported_items} 条`)
+          await loadKnowledge(); await loadStats()
+        } else ElMessage.error(crawlTask.value.error || '导入失败')
+      }
+    } catch (e: any) {
+      if (taskTimer) clearInterval(taskTimer)
+      taskTimer = undefined; crawling.value = false; ElMessage.error(e.message)
+    }
+  }, 1000)
+}
+
+const submitCrawl = async () => {
+  if (!crawlForm.target.trim()) return
+  crawling.value = true
+  try {
+    const payload = { ...crawlForm, target: crawlForm.target.trim() }
+    crawlTask.value = crawlForm.source_type === 'url' ? await knowledgeApi.importUrl(payload) : await knowledgeApi.startCrawl(payload)
+    pollCrawlTask(crawlTask.value.id)
+  } catch (e: any) { crawling.value = false; ElMessage.error(e.message) }
 }
 
 const resetImportForm = () => {
@@ -520,6 +631,11 @@ const resetImportForm = () => {
 onMounted(() => {
   loadStats()
   loadKnowledge()
+})
+
+onUnmounted(() => {
+  if (taskTimer) clearInterval(taskTimer)
+  taskTimer = undefined
 })
 </script>
 
@@ -741,6 +857,7 @@ onMounted(() => {
 .source-dot.csdn { background: #f97316; }
 .source-dot.arxiv { background: #8b5cf6; }
 .source-dot.github { background: #6b7280; }
+.source-dot.url { background: #0ea5e9; }
 .source-dot.manual { background: #3b82f6; }
 
 /* 表格样式 */
@@ -760,6 +877,15 @@ onMounted(() => {
   padding: 14px 0;
   vertical-align: middle;
 }
+
+.search-results { margin-top: 20px; }
+.search-results-title { font-size: 14px; font-weight: 600; margin-bottom: 10px; color: #374151; }
+.search-result { margin-bottom: 10px; border: 1px solid #e5e7eb; }
+.search-result-header { display:flex; justify-content:space-between; align-items:center; }
+.search-result p { margin: 8px 0; color: #4b5563; line-height: 1.6; white-space: pre-wrap; }
+.search-result a { color: #2563eb; font-size: 12px; word-break: break-all; }
+.task-status { display:block; margin-top:8px; color:#6b7280; font-size:12px; }
+.task-error { color:#dc2626; font-size:12px; }
 
 .title-cell {
   display: flex;
@@ -814,6 +940,11 @@ onMounted(() => {
 .source-badge.github {
   background: #f3f4f6;
   color: #4b5563;
+}
+
+.source-badge.url {
+  background: #e0f2fe;
+  color: #0284c7;
 }
 
 .source-badge.manual {

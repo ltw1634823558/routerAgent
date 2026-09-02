@@ -77,7 +77,7 @@ class OfficialCrawler(BaseCrawler):
                 break
 
         await asyncio.sleep(0.5)
-        return results
+        return results[: max(1, max_docs)]
 
     async def _crawl_docs(self, url: str, max_docs: int) -> List[Dict[str, Any]]:
         """爬取文档页面"""
@@ -108,6 +108,8 @@ class OfficialCrawler(BaseCrawler):
                         content_parts.append({
                             "title": f"{title} - 部分 {section.name}",
                             "content": text,
+                            "url": url,
+                            "source": "official",
                         })
                         if len(content_parts) >= max_docs:
                             break

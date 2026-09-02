@@ -98,14 +98,35 @@
             <code class="model-code">{{ row.model_name }}</code>
           </template>
         </el-table-column>
+        <el-table-column label="能力" min-width="170">
+          <template #default="{ row }">
+            <div class="capability-tags">
+              <el-tag v-for="capability in getCapabilities(row)" :key="capability" size="small" effect="plain">
+                {{ capabilityLabels[capability] || capability }}
+              </el-tag>
+            </div>
+          </template>
+        </el-table-column>
+        <el-table-column label="连接状态" width="112">
+          <template #default="{ row }">
+            <span v-if="testStatus[row.id]" class="connection-status" :class="testStatus[row.id].success ? 'success' : 'failed'">
+              <el-icon><CircleCheck v-if="testStatus[row.id].success" /><CircleClose v-else /></el-icon>
+              {{ testStatus[row.id].success ? `${testStatus[row.id].latency_ms} ms` : '失败' }}
+            </span>
+            <span v-else class="connection-status unknown"><el-icon><QuestionFilled /></el-icon>未测试</span>
+          </template>
+        </el-table-column>
         <el-table-column prop="api_url" label="API 地址" min-width="240" show-overflow-tooltip>
           <template #default="{ row }">
             <div class="api-url"><el-icon><Link /></el-icon><span>{{ row.api_url }}</span></div>
           </template>
         </el-table-column>
-        <el-table-column label="操作" width="148" align="right" fixed="right">
+        <el-table-column label="操作" width="188" align="right" fixed="right">
           <template #default="{ row }">
             <div class="action-btns">
+              <el-tooltip content="测试连接" placement="top">
+                <el-button class="action-btn test" aria-label="测试连接" :loading="testingId === row.id" @click="testConnection(row)"><el-icon><Connection /></el-icon></el-button>
+              </el-tooltip>
               <el-tooltip content="编辑配置" placement="top">
                 <el-button class="action-btn" aria-label="编辑配置" @click="editModel(row)"><el-icon><Edit /></el-icon></el-button>
               </el-tooltip>
@@ -159,6 +180,26 @@
             请在 .env 文件中配置对应的环境变量值
           </div>
         </el-form-item>
+        <div class="form-grid advanced-fields">
+          <el-form-item label="模型能力">
+            <el-select v-model="form.capabilities" multiple clearable filterable placeholder="选择该模型支持的能力" style="width: 100%">
+              <el-option v-for="capability in capabilityOptions" :key="capability.value" :label="capability.label" :value="capability.value" />
+            </el-select>
+          </el-form-item>
+          <el-form-item label="故障切换优先级">
+            <el-input-number v-model="form.priority" :min="0" :max="10000" controls-position="right" style="width: 100%" />
+            <div class="form-tip">数字越小，自动切换时越优先</div>
+          </el-form-item>
+          <el-form-item label="备用模型">
+            <el-select v-model="form.fallback_model_ids" multiple clearable filterable placeholder="可选，失败时依次尝试" style="width: 100%">
+              <el-option v-for="model in fallbackCandidates" :key="model.id" :label="`${model.name} (${model.model_name})`" :value="model.id" />
+            </el-select>
+          </el-form-item>
+        </div>
+        <div class="default-setting">
+          <div><strong>启用模型</strong><span>停用后不会被 Agent 或故障切换使用</span></div>
+          <el-switch v-model="form.enabled" />
+        </div>
         <div class="default-setting">
           <div><strong>设为默认模型</strong><span>新建 Agent 任务时优先使用此配置</span></div>
           <el-switch v-model="form.is_default" />
@@ -190,6 +231,8 @@ const isEdit = ref(false)
 const editId = ref<number | null>(null)
 const keyword = ref('')
 const providerFilter = ref('')
+const testingId = ref<number | null>(null)
+const testStatus = ref<Record<number, { success: boolean; latency_ms?: number; message?: string }>>({})
 
 const form = ref({
   name: '',
@@ -198,6 +241,10 @@ const form = ref({
   api_url: '',
   api_key_env: '',
   is_default: false,
+  capabilities: [] as string[],
+  priority: 100,
+  enabled: true,
+  fallback_model_ids: [] as number[],
 })
 
 const providerCount = computed(() => new Set(models.value.map(m => m.provider)).size)
@@ -241,6 +288,36 @@ const filteredModels = computed(() => {
     return matchesProvider && matchesSearch
   })
 })
+
+const fallbackCandidates = computed(() => models.value.filter((model) => model.id !== editId.value && model.enabled !== false))
+
+const capabilityLabels: Record<string, string> = {
+  chat: '对话',
+  stream: '流式',
+  vision: '视觉',
+  reasoning: '推理',
+  tools: '工具调用',
+  function_calling: '函数调用',
+}
+
+const capabilityOptions = Object.entries(capabilityLabels).map(([value, label]) => ({ value, label }))
+
+const providerCapabilities: Record<string, string[]> = {
+  zhipu: ['chat', 'stream', 'vision'],
+  alibaba: ['chat', 'stream', 'vision'],
+  baidu: ['chat', 'stream'],
+  xunfei: ['chat', 'stream'],
+  tencent: ['chat', 'stream'],
+  moonshot: ['chat', 'stream'],
+  minimax: ['chat', 'stream', 'vision'],
+  deepseek: ['chat', 'stream', 'reasoning'],
+  custom: ['chat', 'stream'],
+}
+
+const getCapabilities = (model: any): string[] => {
+  const values = Array.isArray(model.capabilities) ? model.capabilities.filter(Boolean) : []
+  return values.length ? values : (providerCapabilities[model.provider] || ['chat'])
+}
 
 const getProviderLabel = (provider: string) => providerLabels[provider] || provider
 const getProviderColor = (provider: string) => providerColors[provider] || '#6b7280'
@@ -315,6 +392,24 @@ const setDefault = async (row: any) => {
   }
 }
 
+const testConnection = async (row: any) => {
+  testingId.value = row.id
+  try {
+    const result: any = await modelApi.testConnection(row.id)
+    testStatus.value[row.id] = result
+    if (result.success) {
+      ElMessage.success(`连接成功${result.latency_ms ? `，耗时 ${result.latency_ms} ms` : ''}`)
+    } else {
+      ElMessage.error(result.message || '连接失败')
+    }
+  } catch (e: any) {
+    testStatus.value[row.id] = { success: false, message: e.message }
+    ElMessage.error(e.message)
+  } finally {
+    testingId.value = null
+  }
+}
+
 const resetForm = () => {
   form.value = {
     name: '',
@@ -323,6 +418,10 @@ const resetForm = () => {
     api_url: '',
     api_key_env: '',
     is_default: false,
+    capabilities: [],
+    priority: 100,
+    enabled: true,
+    fallback_model_ids: [],
   }
   isEdit.value = false
   editId.value = null
@@ -561,6 +660,15 @@ onMounted(loadModels)
   background: #fde68a;
 }
 
+.action-btn.test {
+  background: #eef4ff;
+  color: #356ae6;
+}
+
+.action-btn.test:hover {
+  background: #dbe8ff;
+}
+
 .action-btn.delete {
   background: #fee2e2;
   color: #ef4444;
@@ -664,6 +772,12 @@ onMounted(loadModels)
 .provider-tag { border-radius:5px; }
 .api-url { display:flex; align-items:center; gap:6px; }
 .api-url .el-icon { color:#a7afbd; }
+.capability-tags { display:flex; flex-wrap:wrap; gap:4px; }
+.capability-tags :deep(.el-tag) { border-radius:4px; font-size:11px; }
+.connection-status { display:inline-flex; align-items:center; gap:4px; font-size:12px; white-space:nowrap; }
+.connection-status.success { color:#15966b; }
+.connection-status.failed { color:#e14b4b; }
+.connection-status.unknown { color:#98a1b2; }
 .action-btns { gap:4px; }
 .action-btn { width:30px; height:30px; padding:0; border:1px solid transparent; }
 .action-btn:hover { border-color:currentColor; }
@@ -675,6 +789,7 @@ onMounted(loadModels)
 .default-setting div { display:flex; flex-direction:column; gap:3px; }
 .default-setting strong { color:#2b3445; font-size:13px; }
 .default-setting span { color:#9099aa; font-size:12px; }
+.advanced-fields { margin-top:2px; }
 @media (max-width:900px) {
   .stats-row { flex-wrap:wrap; }
   .stat-card, .default-stat { flex:1 1 calc(50% - 8px); }
